@@ -1,0 +1,2550 @@
+import flet as ft
+import pandas as pd
+import os
+from openpyxl import load_workbook, Workbook
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+import json
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+def main(page: ft.Page):
+    page.title = "Tracking Adaptation Compliance and Operational Standards"
+    page.scroll = "none"
+
+    # Window size
+    page.window.width = 1600
+    page.window.height = 1000
+    page.window.resizable = True
+    page.window.maximized = False
+    page.window.icon = r"T:\BAE\No-Touchy\TACOS_App\TEST\newapp\taco.ico"
+    page.update()
+
+    window_state = {"width": 1600, "height": 1000}
+
+    taco_theme = {
+        "light": {
+            "bg": "#FFF8E7",
+            "outline": "#FFD166",
+            "text": "#4E342E",
+            "surface": "#F5F5F5",
+            "pinned_surface": "#FFF3CD",
+        },
+        "dark": {
+            "bg": "#2E2E2E",
+            "outline": "#8B4513",
+            "text": "#F1F1E6",
+            "surface": "#3A3A3A",
+            "pinned_surface": "#5A4B2E",
+        },
+    }
+
+    excel_path = r"T:\BAE\No-Touchy\TACOS_App\TEST\newapp\adaptations.xlsx"
+    config_path = r"T:\BAE\No-Touchy\TACOS_App\TEST\newapp\config.json"
+
+    # ------------------- Config -------------------
+    def load_config():
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r") as f:
+                    return json.load(f)
+            except Exception:
+                logger.exception("Failed to load config.json, using defaults")
+        return {
+            "employees": ["Alice", "Bob", "Charlie"],
+            "admins": ["Alice"],
+            "pinned_ops": [
+                "Database Validation",
+                "MSAW Validation",
+                "QA Complete",
+                "Adaptation Sent",
+            ],
+            "other_ops": [
+                "ACR",
+                "AMV",
+                "ATPA",
+                "Airport",
+                "CGW Parameters",
+                "Coordination Channels",
+                "DCP/DCB Map Assignments",
+                "Enable Wake Category",
+                "Filters",
+                "Fitter",
+                "Fix Pairs",
+                "GTM",
+                "Hospitals",
+                "Imported Adaptation",
+                "MSAW Review",
+                "MSAW/CA Areas",
+                "NAS/ETMS",
+                "RVM",
+                "Radar",
+                "Radar Pairs",
+                "Radar: Reflection Surfaces",
+                "Radar: Test Targets",
+                "Rules",
+                "SSR Codes",
+                "Sensor & Ground Stations",
+                "Significant Points",
+                "Simulator Runways",
+                "Software Upgrade",
+                "TCP Configuration",
+                "TCW/TDW Lists",
+                "Tileset",
+                "User Interface Parameters",
+                "VSP",
+            ],
+            "site_groups": {
+                "USA": [],
+                "USN": [],
+                "USMC": [],
+                "USAF": []
+            },
+            "admin_password": "admin123",
+            "theme_mode": "light"
+        }
+
+    def save_config(config):
+        try:
+            os.makedirs(os.path.dirname(config_path), exist_ok=True)
+            with open(config_path, "w") as f:
+                json.dump(config, f, indent=2)
+        except Exception:
+            logger.exception("Error saving config")
+
+    # Load config
+    config = load_config()
+    ADMIN_PASSWORD = config.get("admin_password", "admin123")
+    page.theme_mode = config.get("theme_mode", "light")
+
+    employees = config.get("employees", [])
+    admins = config.get("admins", [])
+    pinned_ops = config.get("pinned_ops", [])
+    other_ops = config.get("other_ops", [])
+    operations_list = pinned_ops + other_ops
+    site_groups = config.get("site_groups", {"USA": [], "USN": [], "USMC": [], "USAF": []})
+
+    group_colors = {
+        "USA": "00ff00",
+        "USN": "ffff00",
+        "USMC": "ff0000",
+        "USAF": "add8e6"
+    }
+
+    fixed_columns = ["Release Date", "Employee", "Adaptation Name"]
+
+    def get_all_columns():
+        ops_sorted = pinned_ops + sorted([op for op in operations_list if op not in pinned_ops])
+        return fixed_columns + ops_sorted + ["Notes"]
+
+    def get_site_group(text):
+        if not text:
+            return None
+        text_upper = str(text).upper()
+        for group, sites in site_groups.items():
+            for site in sites:
+                if site.upper() in text_upper:
+                    return group
+        return None
+
+    # ------------------- Excel helpers -------------------
+    def style_all_sheets(file_path):
+        try:
+            wb = load_workbook(file_path)
+            light_blue_fill = PatternFill(start_color="ADD8E6", end_color="ADD8E6", fill_type="solid")
+            bold_font = Font(bold=True)
+            center_alignment = Alignment(horizontal="center", vertical="center")
+
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                # Header styling
+                if ws.max_row >= 1:
+                    for cell in ws[1]:
+                        cell.fill = light_blue_fill
+                        cell.font = bold_font
+                        cell.alignment = center_alignment
+
+                # Color coding
+                if sheet_name == "Adaptations":
+                    adaptation_name_col = 3
+                    for row in range(2, ws.max_row + 1):
+                        cell = ws.cell(row=row, column=adaptation_name_col)
+                        if cell.value:
+                            group = get_site_group(cell.value)
+                            if group and group in group_colors:
+                                cell.fill = PatternFill(start_color=group_colors[group], end_color=group_colors[group], fill_type="solid")
+                elif sheet_name in ["MSAW", "APEX", "Support"]:
+                    site_col = 3
+                    for row in range(2, ws.max_row + 1):
+                        cell = ws.cell(row=row, column=site_col)
+                        if cell.value:
+                            group = get_site_group(cell.value)
+                            if group and group in group_colors:
+                                cell.fill = PatternFill(start_color=group_colors[group], end_color=group_colors[group], fill_type="solid")
+
+                # Autosize columns
+                for column in ws.columns:
+                    max_length = 0
+                    try:
+                        column_letter = column[0].column_letter
+                    except Exception:
+                        continue
+                    for cell in column:
+                        try:
+                            if cell.value:
+                                max_length = max(max_length, len(str(cell.value)))
+                        except Exception:
+                            pass
+                    ws.column_dimensions[column_letter].width = min(max_length + 2, 50)
+
+            wb.save(file_path)
+            wb.close()
+        except Exception:
+            logger.exception("Error styling headers and applying color coding")
+
+    # Load / create main adaptations DataFrame
+    if os.path.exists(excel_path):
+        try:
+            df = pd.read_excel(excel_path, sheet_name="Adaptations", engine="openpyxl")
+            expected_columns = get_all_columns()
+            for col in expected_columns:
+                if col not in df.columns:
+                    df[col] = ""
+            df = df.reindex(columns=expected_columns)
+        except Exception:
+            logger.exception("Error loading Excel")
+            df = pd.DataFrame(columns=get_all_columns())
+    else:
+        df = pd.DataFrame(columns=get_all_columns())
+
+    def reload_dataframe():
+        nonlocal df
+        try:
+            df = pd.read_excel(excel_path, sheet_name="Adaptations", engine="openpyxl")
+            expected_columns = get_all_columns()
+            for col in expected_columns:
+                if col not in df.columns:
+                    df[col] = ""
+            df = df.reindex(columns=expected_columns)
+        except Exception:
+            logger.exception("Error reloading DataFrame from Excel")
+            df = pd.DataFrame(columns=get_all_columns())
+
+    def get_or_create_sheet(sheet_name):
+        default_columns = {
+            "MSAW": ["Date", "Employee", "Site", "Hours"],
+            "APEX": ["Date", "Employee", "Site", "Hours"],
+            "Support": ["Date", "Employee", "Site", "Contact Method", "Summary"],
+            "Tips": ["Date", "Employee", "Amount", "Note"],
+        }
+        if os.path.exists(excel_path):
+            try:
+                xls = pd.ExcelFile(excel_path)
+                if sheet_name in xls.sheet_names:
+                    return pd.read_excel(excel_path, sheet_name=sheet_name, engine="openpyxl")
+                return pd.DataFrame(columns=default_columns.get(sheet_name, []))
+            except Exception:
+                logger.exception("Error reading sheet from Excel")
+                return pd.DataFrame(columns=default_columns.get(sheet_name, []))
+        else:
+            return pd.DataFrame(columns=default_columns.get(sheet_name, []))
+
+    def save_sheet(sheet_name, df_sheet):
+        try:
+            all_sheets = {}
+            sheet_order = ["Adaptations", "MSAW", "APEX", "Support", "Tips"]
+            if os.path.exists(excel_path):
+                with pd.ExcelFile(excel_path) as xls:
+                    for existing_sheet in xls.sheet_names:
+                        if existing_sheet != sheet_name:
+                            all_sheets[existing_sheet] = pd.read_excel(xls, sheet_name=existing_sheet)
+            all_sheets[sheet_name] = df_sheet
+            with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
+                for name in sheet_order:
+                    if name in all_sheets:
+                        all_sheets[name].to_excel(writer, sheet_name=name, index=False)
+                for name, df_extra in all_sheets.items():
+                    if name not in sheet_order:
+                        df_extra.to_excel(writer, sheet_name=name, index=False)
+            style_all_sheets(excel_path)
+        except Exception:
+            logger.exception("Error saving sheet")
+
+    def save_adaptations_sheet(df_adaptations):
+        try:
+            all_sheets = {}
+            sheet_order = ["Adaptations", "MSAW", "APEX", "Support", "Tips"]
+            if os.path.exists(excel_path):
+                with pd.ExcelFile(excel_path) as xls:
+                    for sheet_name in xls.sheet_names:
+                        if sheet_name != "Adaptations":
+                            all_sheets[sheet_name] = pd.read_excel(xls, sheet_name=sheet_name)
+            all_sheets["Adaptations"] = df_adaptations.fillna("")
+            with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
+                for sheet_name in sheet_order:
+                    if sheet_name in all_sheets:
+                        all_sheets[sheet_name].to_excel(writer, sheet_name=sheet_name, index=False)
+                for name, df_extra in all_sheets.items():
+                    if name not in sheet_order:
+                        df_extra.to_excel(writer, sheet_name=name, index=False)
+            style_all_sheets(excel_path)
+        except Exception:
+            logger.exception("Error saving Adaptations sheet")
+
+    # ----- Tips helpers -----
+    def get_tips_total():
+        try:
+            df_tips = get_or_create_sheet("Tips")
+            if not df_tips.empty and "Amount" in df_tips.columns:
+                return float(pd.to_numeric(df_tips["Amount"], errors="coerce").fillna(0).sum())
+        except Exception:
+            logger.exception("Error computing tips total")
+        return 0.0
+
+    # ------------------- SnackBars -------------------
+    def show_success_message(message: str):
+        page.open(ft.SnackBar(content=ft.Text(message, color="white"), bgcolor="#2e7d32"))
+
+    def show_error_message(message: str):
+        page.open(ft.SnackBar(content=ft.Text(message, color="white"), bgcolor="#c62828"))
+
+    # ------------------- Shared state -------------------
+    operations_selected = {}
+
+    theme_button = ft.ElevatedButton("🌙 Dark Mode")
+    tip_button = ft.ElevatedButton("💸 Tip")
+
+    def toggle_theme(e=None):
+        page.theme_mode = "dark" if page.theme_mode == "light" else "light"
+        apply_theme()
+        try:
+            config["theme_mode"] = page.theme_mode
+            save_config(config)
+        except Exception:
+            logger.exception("Error saving theme preference")
+
+    theme_button.on_click = toggle_theme
+
+    # ------------------- Tip Dialog (Improved) -------------------
+    def open_tip_dialog(e=None):
+        try:
+            from datetime import datetime
+            theme = taco_theme[page.theme_mode]
+
+            total_all = get_tips_total()
+            tally_value_text = ft.Text(f"${total_all:,.2f}", size=22, weight="bold", color="#2e7d32")
+
+            tally_chip = ft.Container(
+                bgcolor="#E8F5E9",
+                border_radius=8,
+                padding=10,
+                border=ft.border.all(1, "#C8E6C9"),
+                content=ft.Row(
+                    [
+                        ft.Icon(ft.Icons.SAVINGS, color="#2e7d32"),
+                        ft.Text("Total tipped (all-time):", weight="bold", color="#1b5e20"),
+                        tally_value_text,
+                    ],
+                    spacing=10,
+                    alignment="start",
+                ),
+            )
+
+            tip_employee = ft.Dropdown(
+                label="From (Employee)",
+                options=[ft.dropdown.Option(emp) for emp in employees] + [ft.dropdown.Option("Anonymous")],
+                width=280,
+            )
+            try:
+                current_emp = employee_dropdown.value
+                tip_employee.value = current_emp if current_emp in employees else "Anonymous"
+            except Exception:
+                tip_employee.value = "Anonymous"
+
+            amount_field = ft.TextField(
+                label="Amount",
+                prefix_text="$",
+                width=160,
+                text_align="center",
+                keyboard_type=ft.KeyboardType.NUMBER,
+                autofocus=True,
+            )
+
+            def set_amount(val):
+                def _set(_e):
+                    amount_field.value = str(val)
+                    page.update()
+                return _set
+
+            quick_row = ft.Row(
+                [
+                    ft.FilledTonalButton("$1", on_click=set_amount(1)),
+                    ft.FilledTonalButton("$5", on_click=set_amount(5)),
+                    ft.FilledTonalButton("$10", on_click=set_amount(10)),
+                    ft.FilledTonalButton("$20", on_click=set_amount(20)),
+                ],
+                spacing=8,
+                wrap=True,
+            )
+
+            note_field = ft.TextField(
+                label="Message (optional)",
+                hint_text="Say something nice…",
+                multiline=True,
+                min_lines=3,
+                max_lines=6,
+                expand=True,
+                keyboard_type=ft.KeyboardType.TEXT,
+            )
+
+            dialog_title = ft.Row(
+                [
+                    ft.Text("Tip Jar", size=22, weight="bold", color=theme["text"]),
+                    ft.Text("💛", color=theme["text"]),
+                ],
+                spacing=4,
+            )
+
+            body = ft.Column(
+                [
+                    tally_chip,
+                    ft.Container(height=4),
+                    ft.Row([tip_employee, amount_field, quick_row], alignment="start", spacing=16),
+                    note_field,
+                ],
+                spacing=12,
+                expand=True,
+            )
+
+            def close_dialog():
+                try:
+                    if tip_overlay in page.overlay:
+                        page.overlay.remove(tip_overlay)
+                    page.update()
+                except Exception:
+                    logger.exception("Error closing tip dialog")
+
+            def submit_tip(_e=None):
+                amt_raw = (amount_field.value or "").strip()
+                try:
+                    amt = float(amt_raw)
+                except Exception:
+                    show_error_message("Please enter a valid number for Amount.")
+                    return
+                if amt <= 0:
+                    show_error_message("Amount must be greater than 0.")
+                    return
+
+                name = tip_employee.value or "Anonymous"
+                note = (note_field.value or "").strip()
+                date_str = datetime.now().strftime("%Y-%m-%d")
+
+                try:
+                    df_tips = get_or_create_sheet("Tips")
+                    new_row = pd.DataFrame([{
+                        "Date": date_str,
+                        "Employee": name,
+                        "Amount": amt,
+                        "Note": note
+                    }])
+                    df_tips = pd.concat([df_tips, new_row], ignore_index=True)
+                    save_sheet("Tips", df_tips)
+                except Exception:
+                    logger.exception("Error saving Tip")
+                    show_error_message("Failed to save tip (still fake!).")
+                    return
+
+                tally_value_text.value = f"${get_tips_total():,.2f}"
+                amount_field.value = ""
+                note_field.value = ""
+                page.open(ft.SnackBar(content=ft.Text("Thanks for the tip! 🌮💛"), bgcolor=ft.Colors.GREEN_700))
+                page.update()
+
+            actions_row = ft.Row(
+                [
+                    ft.TextButton("Close", on_click=lambda _e: close_dialog()),
+                    ft.ElevatedButton("Send Tip", on_click=submit_tip),
+                ],
+                alignment="end",
+                spacing=10,
+            )
+
+            dialog_card = ft.Container(
+                width=685,
+                height=420,
+                bgcolor=theme["surface"],
+                border_radius=12,
+                padding=20,
+                border=ft.border.all(2, taco_theme[page.theme_mode]["outline"]),
+                shadow=ft.BoxShadow(spread_radius=6, blur_radius=16, color="#40000000"),
+                content=ft.Column(
+                    [
+                        dialog_title,
+                        ft.Divider(),
+                        ft.Container(content=body, expand=True),
+                        ft.Divider(),
+                        actions_row,
+                    ],
+                    spacing=10,
+                    expand=True,
+                ),
+            )
+
+            tip_overlay = ft.Stack(
+                [
+                    ft.Container(bgcolor="#80000000", expand=True, on_click=lambda _e: None),
+                    ft.Container(content=dialog_card, alignment=ft.alignment.center, expand=True),
+                ],
+                expand=True,
+            )
+
+            page.overlay.append(tip_overlay)
+            page.update()
+        except Exception:
+            logger.exception("Error opening tip dialog")
+            show_error_message("Failed to open Tip dialog.")
+
+    tip_button.on_click = open_tip_dialog
+
+    # DatePicker (Adaptations)
+    picker = ft.DatePicker()
+    page.overlay.append(picker)
+
+    def open_picker(e):
+        picker.open = True
+        page.update()
+
+    def picker_change(e):
+        release_date_field.value = picker.value.strftime("%Y-%m-%d") if picker.value else ""
+        picker.open = False
+        page.update()
+
+    picker.on_change = picker_change
+
+    # ------------------- Headers -------------------
+    submitted_adaptations_header = ft.Text("Submitted Adaptations", weight="bold", size=20)
+    msaw_hours_header = ft.Text("MSAW Hours Entry", weight="bold", size=18)
+    apex_hours_header = ft.Text("APEX Hours Entry", weight="bold", size=18)
+    support_header = ft.Text("Support Entry", weight="bold", size=18)
+
+    # ------------------- Adaptations form controls -------------------
+    employee_dropdown = ft.Dropdown(
+        label="Select Employee",
+        options=[ft.dropdown.Option(emp) for emp in employees],
+        width=280,
+        value=None
+    )
+    adaptation_name = ft.TextField(label="Adaptation Name", width=280)
+    release_date_field = ft.TextField(label="Release Date", width=200, read_only=True)
+    notes_input = ft.TextField(label="Notes", multiline=True, width=280, height=100)
+    calendar_btn = ft.IconButton(icon="calendar_month")
+    release_date_row = ft.Row([release_date_field, calendar_btn], spacing=10)
+    operations_btn = ft.OutlinedButton("⚙️ Operations")
+    submit_btn = ft.ElevatedButton(
+        "Submit",
+        style=ft.ButtonStyle(
+            padding=ft.padding.symmetric(20, 16),
+            bgcolor="#FFD166",
+            color="#4E342E",
+            shape=ft.RoundedRectangleBorder(radius=10),
+        ),
+    )
+    calendar_btn.on_click = open_picker
+
+    selected_operations_display_column = []
+    selected_operations_display = ft.Container(
+        content=ft.Column(selected_operations_display_column, height=130, scroll="always", width=250),
+        border=ft.border.all(2, taco_theme[page.theme_mode]["outline"]),
+        border_radius=6,
+        padding=8,
+        bgcolor=taco_theme[page.theme_mode]["bg"],
+        width=280,
+        alignment=ft.alignment.top_left,
+    )
+
+    # ------------------- Operations selection dialog -------------------
+    selection_controls = []
+    selection_inputs = {}
+
+    def build_selection_controls():
+        selection_controls.clear()
+        selection_inputs.clear()
+        for op in operations_list:
+            chk = ft.Checkbox(label=op)
+            selection_inputs[op] = chk
+            selection_controls.append(chk)
+
+    def update_selected_display():
+        selected_operations_display.content.controls.clear()
+        theme = taco_theme[page.theme_mode]
+        if operations_selected:
+            selected_operations_display.content.controls.append(
+                ft.Text("Current Operations:", weight="bold", color=theme["text"])
+            )
+            for op, qty in sorted(operations_selected.items()):
+                selected_operations_display.content.controls.append(
+                    ft.Row(
+                        [ft.Text(op, width=190, color=theme["text"]), ft.Text(str(qty), color=theme["text"])],
+                        alignment="start",
+                        spacing=10,
+                    )
+                )
+        else:
+            selected_operations_display.content.controls.append(
+                ft.Text("No operations selected", italic=True, color=theme["text"])
+            )
+        page.update()
+
+    def open_operations_selection(e=None):
+        try:
+            for op, chk in selection_inputs.items():
+                chk.value = op in operations_selected
+
+            dialog_inner_content = ft.Container()
+            dialog_title = ft.Text("Select Operations", size=20, weight="bold")
+            dialog_actions = ft.Row([], alignment="end", spacing=10)
+
+            dialog_box = ft.Container(
+                width=550,
+                height=650,
+                bgcolor="#FFFFFF" if page.theme_mode == "light" else "#2E2E2E",
+                border_radius=10,
+                padding=20,
+                border=ft.border.all(2, "#FFD166"),
+                shadow=ft.BoxShadow(spread_radius=5, blur_radius=15, color="#40000000"),
+                content=ft.Column(
+                    [
+                        ft.Container(content=dialog_title, padding=ft.padding.only(bottom=10)),
+                        ft.Divider(height=1),
+                        ft.Container(content=dialog_inner_content, expand=True),
+                        ft.Divider(height=1),
+                        ft.Container(content=dialog_actions, padding=ft.padding.only(top=10)),
+                    ],
+                    spacing=5,
+                    expand=True,
+                ),
+            )
+
+            dialog_overlay = ft.Stack(
+                [
+                    ft.Container(bgcolor="#80000000", expand=True, on_click=lambda e: None),
+                    ft.Container(content=dialog_box, alignment=ft.alignment.center, expand=True),
+                ],
+                expand=True,
+            )
+
+            def close_dialog():
+                try:
+                    if dialog_overlay in page.overlay:
+                        page.overlay.remove(dialog_overlay)
+                    page.update()
+                except Exception:
+                    logger.exception("Error closing custom dialog")
+
+            def show_selection_view():
+                dialog_inner_content.content = ft.Column(selection_controls, spacing=10, scroll="always", expand=True)
+                dialog_title.value = "Select Operations"
+                dialog_actions.controls = [
+                    ft.TextButton("Cancel", on_click=lambda e: close_dialog()),
+                    ft.ElevatedButton("OK", on_click=lambda e: submit_selection()),
+                ]
+                page.update()
+
+            def show_quantity_view(selected_ops, qty_inputs):
+                qty_controls = []
+                text_fields = []
+                for i, op in enumerate(selected_ops):
+                    text_field = qty_inputs[op]
+                    text_fields.append(text_field)
+
+                    def create_submit_handler(current_idx, fields):
+                        def handler(e):
+                            if current_idx < len(fields) - 1:
+                                try:
+                                    fields[current_idx + 1].focus()
+                                except:
+                                    pass
+                            else:
+                                submit_quantities(qty_inputs)
+                        return handler
+
+                    text_field.on_submit = create_submit_handler(i, text_fields)
+
+                    if i == 0:
+                        qty_controls.append(
+                            ft.Column(
+                                [ft.Row([ft.Text(op, width=300), text_field], spacing=10, alignment="center")],
+                                spacing=5,
+                            )
+                        )
+                    else:
+                        qty_controls.append(ft.Row([ft.Text(op, width=300), text_field], spacing=10, alignment="center"))
+
+                dialog_inner_content.content = ft.Column(qty_controls, spacing=10, scroll="always", expand=True)
+                dialog_title.value = "Input Quantities (Press Enter to navigate)"
+                dialog_actions.controls = [
+                    ft.TextButton("Back", on_click=lambda e: show_selection_view()),
+                    ft.ElevatedButton("Done", on_click=lambda e: submit_quantities(qty_inputs)),
+                ]
+                page.update()
+                if text_fields:
+                    try:
+                        text_fields[0].focus()
+                        page.update()
+                    except:
+                        pass
+
+            def submit_selection():
+                selected_ops = [op for op, chk in selection_inputs.items() if chk.value]
+                if not selected_ops:
+                    operations_selected.clear()
+                    update_selected_display()
+                    close_dialog()
+                    return
+                qty_inputs = {}
+                for op in selected_ops:
+                    qty = ft.TextField(
+                        value=str(operations_selected.get(op, "")),
+                        width=100,
+                        text_align="center",
+                        keyboard_type=ft.KeyboardType.NUMBER,
+                    )
+                    qty_inputs[op] = qty
+                show_quantity_view(selected_ops, qty_inputs)
+
+            def submit_quantities(qty_inputs):
+                errors = [op for op, qty in qty_inputs.items() if not qty.value or qty.value.strip() == ""]
+                if errors:
+                    show_error_message("Please enter quantities for:\n" + "\n".join(f"• {op}" for op in errors))
+                    return
+                invalid = []
+                temp_ops = {}
+                for op, qty in qty_inputs.items():
+                    try:
+                        val = int(qty.value)
+                        if val <= 0:
+                            invalid.append(f"{op} (must be positive)")
+                        else:
+                            temp_ops[op] = val
+                    except ValueError:
+                        invalid.append(f"{op} (must be a number)")
+                if invalid:
+                    show_error_message("Invalid quantities:\n" + "\n".join(f"• {x}" for x in invalid))
+                    return
+                operations_selected.clear()
+                operations_selected.update(temp_ops)
+                update_selected_display()
+                close_dialog()
+
+            page.overlay.append(dialog_overlay)
+            page.update()
+            show_selection_view()
+        except Exception:
+            logger.exception("Error opening operations selection")
+        # show_error_message("Failed to open Operations dialog.")
+
+    operations_btn.on_click = open_operations_selection
+
+    # ------------------- Data Table -------------------
+    def _adaptations_columns(theme):
+        return [
+            ft.DataColumn(ft.Text("Employee", color=theme["text"])),
+            ft.DataColumn(ft.Text("Adaptation Name", color=theme["text"])),
+            ft.DataColumn(ft.Text("Release Date", color=theme["text"])),
+            ft.DataColumn(ft.Text("Actions", color=theme["text"])),
+        ]
+
+    data_table = ft.DataTable(columns=_adaptations_columns(taco_theme[page.theme_mode]), rows=[], show_checkbox_column=False)
+
+    scrollable_table = ft.Container(
+        content=ft.Column([data_table], scroll="always"),
+        height=800,
+        width=1100,
+        bgcolor=taco_theme[page.theme_mode]["bg"],
+        border=ft.border.all(2, taco_theme[page.theme_mode]["outline"]),
+        border_radius=8,
+        padding=8,
+        expand=True,
+    )
+
+    data_content = ft.Container(
+        content=ft.Column([submitted_adaptations_header, scrollable_table]),
+        padding=10,
+        expand=True,
+    )
+
+    input_column = ft.Container(
+        content=ft.Column(
+            [
+                ft.Container(height=20),
+                employee_dropdown,
+                adaptation_name,
+                release_date_row,
+                operations_btn,
+                selected_operations_display,
+                notes_input,
+                submit_btn,
+            ],
+            spacing=15,
+            horizontal_alignment="start",
+        ),
+        width=420,
+        bgcolor=taco_theme[page.theme_mode]["bg"],
+    )
+
+    adaptations_content = ft.Container(
+        content=ft.Row([input_column, data_content], spacing=20, alignment="start", vertical_alignment="start", expand=True),
+        bgcolor=taco_theme[page.theme_mode]["bg"],
+        padding=20,
+        expand=True,
+    )
+
+    # ------------------- Adaptations handlers -------------------
+    def on_delete_adaptation(e):
+        nonlocal df
+        try:
+            payload = e.control.data or {}
+            idx = payload.get("idx")
+            name = payload.get("name", "Adaptation")
+            if idx in df.index:
+                df = df.drop(idx).reset_index(drop=True)
+                save_adaptations_sheet(df)
+                reload_dataframe()
+                update_data_table()
+                e.page.open(ft.SnackBar(content=ft.Text(f"'{name}' deleted successfully!"), bgcolor=ft.Colors.ORANGE_700))
+                e.page.update()
+            else:
+                show_error_message("Row not found")
+        except Exception:
+            logger.exception("Error deleting adaptation")
+            show_error_message("Failed to delete adaptation. See logs.")
+
+    def view_adaptation_details(e):
+        try:
+            payload = e.control.data or {}
+            idx = payload.get("idx")
+            if idx not in df.index:
+                show_error_message("Adaptation not found")
+                return
+            row = df.loc[idx]
+            theme = taco_theme[page.theme_mode]
+            details_column = []
+            details_column.append(ft.Text("Adaptation Details", size=20, weight="bold", color=theme["text"]))
+            details_column.append(ft.Divider())
+            details_column.append(ft.Row([ft.Text("Employee:", weight="bold", width=150, color=theme["text"]), ft.Text(str(row.get("Employee", "")), color=theme["text"])]))
+            details_column.append(ft.Row([ft.Text("Adaptation Name:", weight="bold", width=150, color=theme["text"]), ft.Text(str(row.get("Adaptation Name", "")), color=theme["text"])]))
+            details_column.append(ft.Row([ft.Text("Release Date:", weight="bold", width=150, color=theme["text"]), ft.Text(str(row.get("Release Date", "")) if pd.notna(row.get("Release Date", "")) else "", color=theme["text"])]))
+            details_column.append(ft.Container(height=10))
+            details_column.append(ft.Text("Operations:", weight="bold", size=16, color=theme["text"]))
+            details_column.append(ft.Divider())
+            operations_found = False
+            for op in operations_list:
+                value = row.get(op, "")
+                if pd.notna(value) and value != "" and str(value).strip() not in ("", "0"):
+                    try:
+                        num_value = float(value)
+                        if num_value > 0:
+                            operations_found = True
+                            details_column.append(ft.Row([ft.Text(f"{op}:", width=250, color=theme["text"]), ft.Text(str(int(num_value)), weight="bold", color=theme["text"])]))
+                    except Exception:
+                        operations_found = True
+                        details_column.append(ft.Row([ft.Text(f"{op}:", width=250, color=theme["text"]), ft.Text(str(value), weight="bold", color=theme["text"])]))
+            if not operations_found:
+                details_column.append(ft.Text("No operations recorded", italic=True, color="#999999"))
+            notes = row.get("Notes", "")
+            if pd.notna(notes) and str(notes).strip():
+                details_column.append(ft.Container(height=10))
+                details_column.append(ft.Text("Notes:", weight="bold", size=16, color=theme["text"]))
+                details_column.append(ft.Divider())
+                details_column.append(ft.Text(str(notes), color=theme["text"], selectable=True))
+            details_container = ft.Container(content=ft.Column(details_column, scroll="auto", spacing=8), width=600, height=500, padding=10)
+            dialog_box = ft.Container(
+                width=650,
+                height=600,
+                bgcolor="#FFFFFF" if page.theme_mode == "light" else "#2E2E2E",
+                border_radius=10,
+                padding=20,
+                border=ft.border.all(2, "#FFD166"),
+                shadow=ft.BoxShadow(spread_radius=5, blur_radius=15, color="#40000000"),
+                content=ft.Column(
+                    [
+                        details_container,
+                        ft.Divider(),
+                        ft.Row(
+                            [
+                                ft.Container(expand=True),
+                                ft.ElevatedButton(
+                                    "Close",
+                                    on_click=lambda ev: close_view_dialog(),
+                                    style=ft.ButtonStyle(
+                                        bgcolor="#FFD166" if page.theme_mode == "light" else "#8B4513",
+                                        color="#4E342E" if page.theme_mode == "light" else "#F1F1E6",
+                                    ),
+                                ),
+                            ],
+                            alignment="end",
+                        ),
+                    ],
+                    spacing=10,
+                ),
+            )
+            view_dialog_overlay = ft.Stack(
+                [
+                    ft.Container(bgcolor="#80000000", expand=True, on_click=lambda ev: None),
+                    ft.Container(content=dialog_box, alignment=ft.alignment.center, expand=True),
+                ],
+                expand=True,
+            )
+
+            def close_view_dialog():
+                try:
+                    if view_dialog_overlay in page.overlay:
+                        page.overlay.remove(view_dialog_overlay)
+                    page.update()
+                except Exception:
+                    logger.exception("Error closing view dialog")
+
+            page.overlay.append(view_dialog_overlay)
+            page.update()
+        except Exception:
+            logger.exception("Error viewing adaptation details")
+            show_error_message("Failed to view adaptation details")
+
+    def view_support_details(e):
+        try:
+            payload = e.control.data or {}
+            idx = payload.get("idx")
+            df_support = support_tab_content.support_df_cache
+            if idx not in df_support.index:
+                show_error_message("Support entry not found")
+                return
+            row = df_support.loc[idx]
+            theme = taco_theme[page.theme_mode]
+            details_column = []
+            details_column.append(ft.Text("Support Entry Details", size=20, weight="bold", color=theme["text"]))
+            details_column.append(ft.Divider())
+            details_column.append(ft.Row([ft.Text("Date:", weight="bold", width=150, color=theme["text"]), ft.Text(str(row.get("Date", "")), color=theme["text"])]))
+            details_column.append(ft.Row([ft.Text("Employee:", weight="bold", width=150, color=theme["text"]), ft.Text(str(row.get("Employee", "")), color=theme["text"])]))
+            details_column.append(ft.Row([ft.Text("Site:", weight="bold", width=150, color=theme["text"]), ft.Text(str(row.get("Site", "")), color=theme["text"])]))
+            details_column.append(ft.Row([ft.Text("Contact Method:", weight="bold", width=150, color=theme["text"]), ft.Text(str(row.get("Contact Method", "")) if pd.notna(row.get("Contact Method", "")) else "", color=theme["text"])]))
+            summary = row.get("Summary", "")
+            if pd.notna(summary) and str(summary).strip():
+                details_column.append(ft.Container(height=10))
+                details_column.append(ft.Text("Support Summary:", weight="bold", size=16, color=theme["text"]))
+                details_column.append(ft.Divider())
+                details_column.append(ft.Text(str(summary), color=theme["text"], selectable=True))
+            else:
+                details_column.append(ft.Container(height=10))
+                details_column.append(ft.Text("No summary provided", italic=True, color="#999999"))
+            details_container = ft.Container(content=ft.Column(details_column, scroll="auto", spacing=8), width=600, height=500, padding=10)
+            dialog_box = ft.Container(
+                width=650,
+                height=600,
+                bgcolor="#FFFFFF" if page.theme_mode == "light" else "#2E2E2E",
+                border_radius=10,
+                padding=20,
+                border=ft.border.all(2, "#FFD166"),
+                shadow=ft.BoxShadow(spread_radius=5, blur_radius=15, color="#40000000"),
+                content=ft.Column(
+                    [
+                        details_container,
+                        ft.Divider(),
+                        ft.Row(
+                            [
+                                ft.Container(expand=True),
+                                ft.ElevatedButton(
+                                    "Close",
+                                    on_click=lambda ev: close_view_dialog(),
+                                    style=ft.ButtonStyle(
+                                        bgcolor="#FFD166" if page.theme_mode == "light" else "#8B4513",
+                                        color="#4E342E" if page.theme_mode == "light" else "#F1F1E6",
+                                    ),
+                                ),
+                            ],
+                            alignment="end",
+                        ),
+                    ],
+                    spacing=10,
+                ),
+            )
+            view_dialog_overlay = ft.Stack(
+                [
+                    ft.Container(bgcolor="#80000000", expand=True, on_click=lambda ev: None),
+                    ft.Container(content=dialog_box, alignment=ft.alignment.center, expand=True),
+                ],
+                expand=True,
+            )
+
+            def close_view_dialog():
+                try:
+                    if view_dialog_overlay in page.overlay:
+                        page.overlay.remove(view_dialog_overlay)
+                    page.update()
+                except Exception:
+                    logger.exception("Error closing view dialog")
+
+            page.overlay.append(view_dialog_overlay)
+            page.update()
+        except Exception:
+            logger.exception("Error viewing support details")
+            show_error_message("Failed to view support details")
+
+    def update_data_table():
+        data_table.rows = []
+        theme = taco_theme[page.theme_mode]
+        data_table.columns = _adaptations_columns(theme)
+        selected_employee = employee_dropdown.value
+        if selected_employee and df is not None and not df.empty:
+            filtered_df = df[df["Employee"].astype(str).str.strip().str.lower() == str(selected_employee).strip().lower()]
+            filtered_df = filtered_df.iloc[::-1]
+            for idx, row in filtered_df.iterrows():
+                adaptation_name_str = str(row.get("Adaptation Name", "")) if pd.notna(row.get("Adaptation Name", "")) else ""
+                view_btn = ft.IconButton(
+                    icon=ft.Icons.VISIBILITY,
+                    icon_color="#0070C0",
+                    tooltip="View Details",
+                    data={"idx": idx, "name": adaptation_name_str},
+                    on_click=view_adaptation_details,
+                )
+                delete_btn = ft.ElevatedButton(
+                    "Delete",
+                    height=30,
+                    bgcolor=ft.Colors.RED_400,
+                    color=ft.Colors.WHITE,
+                    data={"idx": idx, "name": adaptation_name_str},
+                    on_click=on_delete_adaptation,
+                )
+                data_table.rows.append(
+                    ft.DataRow(
+                        cells=[
+                            ft.DataCell(ft.Text(str(row.get("Employee", "")), color=theme["text"])),
+                            ft.DataCell(ft.Text(adaptation_name_str, color=theme["text"])),
+                            ft.DataCell(ft.Text(str(row.get("Release Date", "")) if pd.notna(row.get("Release Date", "")) else "", color=theme["text"])),
+                            ft.DataCell(ft.Row([view_btn, delete_btn], spacing=5)),
+                        ]
+                    )
+                )
+        page.update()
+
+    employee_dropdown.on_change = lambda e: update_data_table()
+
+    def submit_form(e):
+        nonlocal df
+        error_message = ""
+        if not employee_dropdown.value:
+            error_message = "Please select an employee."
+        elif not adaptation_name.value.strip():
+            error_message = "Please enter an adaptation name."
+        elif not release_date_field.value.strip():
+            error_message = "Please enter a release date."
+        elif not operations_selected:
+            error_message = "Please select at least one operation and quantity."
+        if error_message:
+            show_error_message(error_message)
+            return
+
+        row_dict = {
+            "Release Date": release_date_field.value,
+            "Employee": employee_dropdown.value,
+            "Adaptation Name": adaptation_name.value,
+            "Notes": notes_input.value,
+        }
+        for op in operations_list:
+            row_dict[op] = ""
+        for op_name, qty in operations_selected.items():
+            if op_name in row_dict:
+                row_dict[op_name] = qty
+
+        new_row = pd.DataFrame([row_dict]).reindex(columns=get_all_columns(), fill_value="")
+        df = pd.concat([df, new_row], ignore_index=True).reindex(columns=get_all_columns())
+
+        try:
+            save_adaptations_sheet(df)
+        except Exception:
+            show_error_message("Error saving adaptation. See logs for details.")
+            return
+
+        adaptation_name.value = ""
+        release_date_field.value = ""
+        notes_input.value = ""
+        operations_selected.clear()
+        update_selected_display()
+        update_data_table()
+
+        e.page.open(ft.SnackBar(ft.Text("Adaptation submitted successfully!")))
+        e.page.update()
+
+    submit_btn.on_click = submit_form
+
+    # ------------------- MSAW/APEX/Support Delete Handlers -------------------
+    def on_delete_msaw(e):
+        try:
+            payload = e.control.data or {}
+            idx = payload.get("idx")
+            name = payload.get("name", "MSAW Entry")
+            df_msaw = get_or_create_sheet("MSAW")
+            if idx in df_msaw.index:
+                df_msaw = df_msaw.drop(idx).reset_index(drop=True)
+                save_sheet("MSAW", df_msaw)
+                if hasattr(msaw_apex_tab_content, "msaw_df_cache"):
+                    msaw_apex_tab_content.msaw_df_cache = df_msaw
+                update_msaw_table_ref and update_msaw_table_ref()
+                e.page.open(ft.SnackBar(content=ft.Text(f"MSAW entry '{name}' deleted successfully!"), bgcolor=ft.Colors.ORANGE_700))
+                e.page.update()
+            else:
+                show_error_message("Entry not found")
+        except Exception:
+            logger.exception("Error deleting MSAW entry")
+            show_error_message("Failed to delete MSAW entry. See logs.")
+
+    def on_delete_apex(e):
+        try:
+            payload = e.control.data or {}
+            idx = payload.get("idx")
+            name = payload.get("name", "APEX Entry")
+            df_apex = get_or_create_sheet("APEX")
+            if idx in df_apex.index:
+                df_apex = df_apex.drop(idx).reset_index(drop=True)
+                save_sheet("APEX", df_apex)
+                if hasattr(msaw_apex_tab_content, "apex_df_cache"):
+                    msaw_apex_tab_content.apex_df_cache = df_apex
+                update_apex_table_ref and update_apex_table_ref()
+                e.page.open(ft.SnackBar(content=ft.Text(f"APEX entry '{name}' deleted successfully!"), bgcolor=ft.Colors.ORANGE_700))
+                e.page.update()
+            else:
+                show_error_message("Entry not found")
+        except Exception:
+            logger.exception("Error deleting APEX entry")
+            show_error_message("Failed to delete APEX entry. See logs.")
+
+    def on_delete_support(e):
+        try:
+            payload = e.control.data or {}
+            idx = payload.get("idx")
+            name = payload.get("name", "Support Entry")
+            df_support = get_or_create_sheet("Support")
+            if idx in df_support.index:
+                df_support = df_support.drop(idx).reset_index(drop=True)
+                save_sheet("Support", df_support)
+                if hasattr(support_tab_content, "support_df_cache"):
+                    support_tab_content.support_df_cache = df_support
+                update_support_table_ref and update_support_table_ref()
+                e.page.open(ft.SnackBar(content=ft.Text(f"Support entry '{name}' deleted successfully!"), bgcolor=ft.Colors.ORANGE_700))
+                e.page.update()
+            else:
+                show_error_message("Entry not found")
+        except Exception:
+            logger.exception("Error deleting Support entry")
+            show_error_message("Failed to delete Support entry. See logs.")
+
+    # ------------------- MSAW/APEX Tab -------------------
+    update_msaw_table_ref = None
+    update_apex_table_ref = None
+
+    class TabContent:
+        def __init__(self):
+            self.theme = taco_theme[page.theme_mode]
+            self.msaw_employee = ft.Dropdown(label="Employee", options=[ft.dropdown.Option(emp) for emp in employees], width=250, value=None)
+            self.msaw_date = ft.TextField(label="Date", read_only=True, width=180)
+            self.msaw_site = ft.TextField(label="Site", width=250)
+            self.msaw_hours = ft.TextField(label="Hours", width=100)
+            self.msaw_calendar_btn = ft.IconButton(icon="calendar_month")
+            self.msaw_picker = ft.DatePicker()
+            page.overlay.append(self.msaw_picker)
+            self.msaw_row = ft.Row([self.msaw_date, self.msaw_calendar_btn], spacing=10)
+
+            self.msaw_data_table = ft.DataTable(
+                columns=[
+                    ft.DataColumn(ft.Text("Date")),
+                    ft.DataColumn(ft.Text("Employee")),
+                    ft.DataColumn(ft.Text("Site")),
+                    ft.DataColumn(ft.Text("Hours")),
+                    ft.DataColumn(ft.Text("Actions")),
+                ],
+                rows=[],
+                show_checkbox_column=False,
+            )
+            self.msaw_scrollable_table = ft.Container(
+                content=ft.Column([self.msaw_data_table], scroll="always", expand=True),
+                bgcolor=self.theme["bg"],
+                border=ft.border.all(2, self.theme["outline"]),
+                border_radius=8,
+                padding=8,
+                expand=True,
+            )
+
+            self.apex_employee = ft.Dropdown(label="Employee", options=[ft.dropdown.Option(emp) for emp in employees], width=250, value=None)
+            self.apex_date = ft.TextField(label="Date", read_only=True, width=180)
+            self.apex_site = ft.TextField(label="Site", width=250)
+            self.apex_hours = ft.TextField(label="Hours", width=100)
+            self.apex_calendar_btn = ft.IconButton(icon="calendar_month")
+            self.apex_picker = ft.DatePicker()
+            page.overlay.append(self.apex_picker)
+            self.apex_row = ft.Row([self.apex_date, self.apex_calendar_btn], spacing=10)
+
+            self.apex_data_table = ft.DataTable(
+                columns=[
+                    ft.DataColumn(ft.Text("Date")),
+                    ft.DataColumn(ft.Text("Employee")),
+                    ft.DataColumn(ft.Text("Site")),
+                    ft.DataColumn(ft.Text("Hours")),
+                    ft.DataColumn(ft.Text("Actions")),
+                ],
+                rows=[],
+                show_checkbox_column=False,
+            )
+            self.apex_scrollable_table = ft.Container(
+                content=ft.Column([self.apex_data_table], scroll="always", expand=True),
+                bgcolor=self.theme["bg"],
+                border=ft.border.all(2, self.theme["outline"]),
+                border_radius=8,
+                padding=8,
+                expand=True,
+            )
+
+            self.msaw_submit = ft.ElevatedButton("Submit MSAW", style=ft.ButtonStyle(bgcolor="#FFD166", color="#4E342E"), width=140)
+            self.apex_submit = ft.ElevatedButton("Submit APEX", style=ft.ButtonStyle(bgcolor="#FFD166", color="#4E342E"), width=140)
+
+            self.msaw_df_cache = get_or_create_sheet("MSAW")
+            self.apex_df_cache = get_or_create_sheet("APEX")
+
+            self.msaw_section = ft.Container(
+                content=ft.Column(
+                    [
+                        msaw_hours_header,
+                        self.msaw_employee,
+                        self.msaw_row,
+                        ft.Row([self.msaw_site, self.msaw_hours], spacing=10),
+                        self.msaw_submit,
+                        ft.Divider(),
+                        ft.Text("Submitted MSAW Hours:", weight="bold", size=14),
+                        self.msaw_scrollable_table,
+                    ],
+                    spacing=12,
+                    expand=True,
+                ),
+                bgcolor=self.theme["bg"],
+                border=ft.border.all(2, self.theme["outline"]),
+                border_radius=8,
+                padding=12,
+                expand=1,
+            )
+
+            self.apex_section = ft.Container(
+                content=ft.Column(
+                    [
+                        apex_hours_header,
+                        self.apex_employee,
+                        self.apex_row,
+                        ft.Row([self.apex_site, self.apex_hours], spacing=10),
+                        self.apex_submit,
+                        ft.Divider(),
+                        ft.Text("Submitted APEX Hours:", weight="bold", size=14),
+                        self.apex_scrollable_table,
+                    ],
+                    spacing=12,
+                    expand=True,
+                ),
+                bgcolor=self.theme["bg"],
+                border=ft.border.all(2, self.theme["outline"]),
+                border_radius=8,
+                padding=12,
+                expand=1,
+            )
+
+            self.container = ft.Container(
+                content=ft.Column(
+                    [ft.Row([self.msaw_section, self.apex_section], spacing=30, alignment="center", vertical_alignment="start", expand=True)],
+                    scroll="auto",
+                    expand=True,
+                ),
+                bgcolor=self.theme["bg"],
+                padding=ft.padding.only(left=20, right=20, top=20, bottom=20),
+                expand=True,
+            )
+
+            self.msaw_calendar_btn.on_click = self.open_msaw_picker
+            self.apex_calendar_btn.on_click = self.open_apex_picker
+            self.msaw_picker.on_change = self.msaw_picker_change
+            self.apex_picker.on_change = self.apex_picker_change
+            self.msaw_submit.on_click = self.submit_msaw
+            self.apex_submit.on_click = self.submit_apex
+
+            self.update_msaw_table()
+            self.update_apex_table()
+
+            self.msaw_employee.on_change = lambda ev: self.update_msaw_table()
+            self.apex_employee.on_change = lambda ev: self.update_apex_table()
+
+        def open_msaw_picker(self, e):
+            self.msaw_picker.open = True
+            page.update()
+
+        def open_apex_picker(self, e):
+            self.apex_picker.open = True
+            page.update()
+
+        def msaw_picker_change(self, e):
+            self.msaw_date.value = self.msaw_picker.value.strftime("%Y-%m-%d") if self.msaw_picker.value else ""
+            self.msaw_picker.open = False
+            page.update()
+
+        def apex_picker_change(self, e):
+            self.apex_date.value = self.apex_picker.value.strftime("%Y-%m-%d") if self.apex_picker.value else ""
+            self.apex_picker.open = False
+            page.update()
+
+        def update_msaw_table(self):
+            self.msaw_data_table.rows.clear()
+            df_msaw = getattr(self, "msaw_df_cache", pd.DataFrame(columns=["Date", "Employee", "Site", "Hours"]))
+            theme = taco_theme[page.theme_mode]
+            selected_emp = (self.msaw_employee.value or "").strip()
+            if selected_emp and not df_msaw.empty:
+                filtered = df_msaw[df_msaw["Employee"].astype(str).str.strip().str.lower() == selected_emp.lower()]
+                df_msaw_sorted = filtered.sort_values(by="Date", ascending=False)
+                for idx, row in df_msaw_sorted.iterrows():
+                    site_str = str(row.get("Site", "")) if pd.notna(row.get("Site", "")) else ""
+                    delete_btn = ft.ElevatedButton("Delete", height=30, bgcolor=ft.Colors.RED_400, color=ft.Colors.WHITE, data={"idx": idx, "name": site_str}, on_click=on_delete_msaw)
+                    self.msaw_data_table.rows.append(
+                        ft.DataRow(
+                            cells=[
+                                ft.DataCell(ft.Text(str(row.get("Date", "")), color=theme["text"])),
+                                ft.DataCell(ft.Text(str(row.get("Employee", "")), color=theme["text"])),
+                                ft.DataCell(ft.Text(site_str, color=theme["text"])),
+                                ft.DataCell(ft.Text(str(row.get("Hours", "")), color=theme["text"])),
+                                ft.DataCell(delete_btn),
+                            ]
+                        )
+                    )
+            self.msaw_data_table.bgcolor = theme["bg"]
+            page.update()
+
+        def update_apex_table(self):
+            self.apex_data_table.rows.clear()
+            df_apex = getattr(self, "apex_df_cache", pd.DataFrame(columns=["Date", "Employee", "Site", "Hours"]))
+            theme = taco_theme[page.theme_mode]
+            selected_emp = (self.apex_employee.value or "").strip()
+            if selected_emp and not df_apex.empty:
+                filtered = df_apex[df_apex["Employee"].astype(str).str.strip().str.lower() == selected_emp.lower()]
+                df_apex_sorted = filtered.sort_values(by="Date", ascending=False)
+                for idx, row in df_apex_sorted.iterrows():
+                    site_str = str(row.get("Site", "")) if pd.notna(row.get("Site", "")) else ""
+                    delete_btn = ft.ElevatedButton("Delete", height=30, bgcolor=ft.Colors.RED_400, color=ft.Colors.WHITE, data={"idx": idx, "name": site_str}, on_click=on_delete_apex)
+                    self.apex_data_table.rows.append(
+                        ft.DataRow(
+                            cells=[
+                                ft.DataCell(ft.Text(str(row.get("Date", "")), color=theme["text"])),
+                                ft.DataCell(ft.Text(str(row.get("Employee", "")), color=theme["text"])),
+                                ft.DataCell(ft.Text(site_str, color=theme["text"])),
+                                ft.DataCell(ft.Text(str(row.get("Hours", "")), color=theme["text"])),
+                                ft.DataCell(delete_btn),
+                            ]
+                        )
+                    )
+            self.apex_data_table.bgcolor = theme["bg"]
+            page.update()
+
+        def submit_msaw(self, e):
+            df_sheet = get_or_create_sheet("MSAW")
+            error = ""
+            if not self.msaw_employee.value:
+                error = "Select Employee for MSAW"
+            elif not self.msaw_date.value.strip():
+                error = "Select Date for MSAW"
+            elif not self.msaw_site.value.strip():
+                error = "Enter Site for MSAW"
+            elif not self.msaw_hours.value.strip():
+                error = "Enter Hours for MSAW"
+            if error:
+                show_error_message(error)
+                return
+            new_row = pd.DataFrame(
+                [{
+                    "Date": self.msaw_date.value,
+                    "Employee": self.msaw_employee.value,
+                    "Site": self.msaw_site.value,
+                    "Hours": self.msaw_hours.value
+                }]
+            )
+            df_sheet = pd.concat([df_sheet, new_row], ignore_index=True)
+            save_sheet("MSAW", df_sheet)
+            self.msaw_df_cache = df_sheet
+            update_msaw_table_ref and update_msaw_table_ref()
+            self.msaw_date.value = ""
+            self.msaw_site.value = ""
+            self.msaw_hours.value = ""
+            e.page.open(ft.SnackBar(content=ft.Text("MSAW hours submitted successfully!"), bgcolor=ft.Colors.GREEN_700))
+            e.page.update()
+
+        def submit_apex(self, e):
+            df_sheet = get_or_create_sheet("APEX")
+            error = ""
+            if not self.apex_employee.value:
+                error = "Select Employee for APEX"
+            elif not self.apex_date.value.strip():
+                error = "Select Date for APEX"
+            elif not self.apex_site.value.strip():
+                error = "Select Site for APEX"
+            elif not self.apex_hours.value.strip():
+                error = "Enter Hours for APEX"
+            if error:
+                show_error_message(error)
+                return
+            new_row = pd.DataFrame(
+                [{
+                    "Date": self.apex_date.value,
+                    "Employee": self.apex_employee.value,
+                    "Site": self.apex_site.value,
+                    "Hours": self.apex_hours.value
+                }]
+            )
+            df_sheet = pd.concat([df_sheet, new_row], ignore_index=True)
+            save_sheet("APEX", df_sheet)
+            self.apex_df_cache = df_sheet
+            update_apex_table_ref and update_apex_table_ref()
+            self.apex_date.value = ""
+            self.apex_site.value = ""
+            self.apex_hours.value = ""
+            e.page.open(ft.SnackBar(content=ft.Text("APEX hours submitted successfully!"), bgcolor=ft.Colors.GREEN_700))
+            e.page.update()
+
+    msaw_apex_tab_content = TabContent()
+    msaw_apex_container = msaw_apex_tab_content.container
+    update_msaw_table_ref = msaw_apex_tab_content.update_msaw_table
+    update_apex_table_ref = msaw_apex_tab_content.update_apex_table
+
+    # ------------------- SupportTab -------------------
+    update_support_table_ref = None
+
+    class SupportTab:
+        def __init__(self):
+            self.theme = taco_theme[page.theme_mode]
+            self.support_employee = ft.Dropdown(label="Employee", options=[ft.dropdown.Option(emp) for emp in employees], width=250, value=None)
+            self.support_date = ft.TextField(label="Date", read_only=True, width=180)
+            self.support_site = ft.TextField(label="Site", width=300)
+            self.support_method_phone = ft.Checkbox(label="Phone")
+            self.support_method_email = ft.Checkbox(label="Email")
+            self.support_summary = ft.TextField(label="Support Summary", multiline=True, width=520, height=120)
+            self.support_calendar_btn = ft.IconButton(icon="calendar_month")
+            self.support_picker = ft.DatePicker()
+            page.overlay.append(self.support_picker)
+            self.support_row = ft.Row([self.support_date, self.support_calendar_btn], spacing=10)
+
+            self.support_data_table = ft.DataTable(
+                columns=[
+                    ft.DataColumn(ft.Text("Date")),
+                    ft.DataColumn(ft.Text("Employee")),
+                    ft.DataColumn(ft.Text("Site")),
+                    ft.DataColumn(ft.Text("Method")),
+                    ft.DataColumn(ft.Text("Actions")),
+                ],
+                rows=[],
+                show_checkbox_column=False,
+            )
+            self.support_scrollable_table = ft.Container(
+                content=ft.Column([self.support_data_table], scroll="always", expand=True),
+                bgcolor=self.theme["bg"],
+                border=ft.border.all(2, self.theme["outline"]),
+                border_radius=8,
+                padding=8,
+                expand=True,
+            )
+
+            self.support_submit = ft.ElevatedButton("Submit Support", style=ft.ButtonStyle(bgcolor="#FFD166", color="#4E342E"), width=160)
+
+            self.support_df_cache = get_or_create_sheet("Support")
+
+            self.support_section = ft.Container(
+                content=ft.Column(
+                    [
+                        support_header,
+                        self.support_employee,
+                        self.support_row,
+                        ft.Row(
+                            [self.support_site, ft.Row([self.support_method_phone, self.support_method_email], spacing=10)],
+                            spacing=10,
+                        ),
+                        self.support_summary,
+                        self.support_submit,
+                        ft.Divider(),
+                        ft.Text("Submitted Support:", weight="bold"),
+                        self.support_scrollable_table,
+                    ],
+                    spacing=12,
+                    expand=True,
+                ),
+                bgcolor=self.theme["bg"],
+                border=ft.border.all(2, self.theme["outline"]),
+                border_radius=8,
+                padding=12,
+                expand=True,
+            )
+
+            self.container = ft.Container(
+                content=ft.Column([self.support_section], scroll="auto", expand=True),
+                bgcolor=self.theme["bg"],
+                padding=ft.padding.only(left=20, right=20, top=20, bottom=20),
+                expand=True,
+            )
+
+            self.support_calendar_btn.on_click = self.open_support_picker
+            self.support_picker.on_change = self.support_picker_change
+            self.support_submit.on_click = self.submit_support
+            self.support_employee.on_change = lambda ev: self.update_support_table()
+
+            self.update_support_table()
+
+        def open_support_picker(self, e):
+            self.support_picker.open = True
+            page.update()
+
+        def support_picker_change(self, e):
+            self.support_date.value = self.support_picker.value.strftime("%Y-%m-%d") if self.support_picker.value else ""
+            self.support_picker.open = False
+            page.update()
+
+        def update_support_table(self):
+            self.support_data_table.rows.clear()
+            df_support = getattr(self, "support_df_cache", pd.DataFrame(columns=["Date", "Employee", "Site", "Contact Method", "Summary"]))
+            theme = taco_theme[page.theme_mode]
+            selected_emp = (self.support_employee.value or "").strip()
+            if selected_emp and not df_support.empty:
+                filtered = df_support[df_support["Employee"].astype(str).str.strip().str.lower() == selected_emp.lower()]
+                df_support_sorted = filtered.sort_values(by="Date", ascending=False)
+                for idx, row in df_support_sorted.iterrows():
+                    site_str = str(row.get("Site", "")) if pd.notna(row.get("Site", "")) else ""
+                    view_btn = ft.IconButton(
+                        icon=ft.Icons.VISIBILITY,
+                        icon_color="#0070C0",
+                        tooltip="View Details",
+                        data={"idx": idx, "name": site_str},
+                        on_click=view_support_details,
+                    )
+                    delete_btn = ft.ElevatedButton("Delete", height=30, bgcolor=ft.Colors.RED_400, color=ft.Colors.WHITE, data={"idx": idx, "name": site_str}, on_click=on_delete_support)
+                    self.support_data_table.rows.append(
+                        ft.DataRow(
+                            cells=[
+                                ft.DataCell(ft.Text(str(row.get("Date", "")), color=theme["text"])),
+                                ft.DataCell(ft.Text(str(row.get("Employee", "")), color=theme["text"])),
+                                ft.DataCell(ft.Text(site_str, color=theme["text"])),
+                                ft.DataCell(ft.Text(str(row.get("Contact Method", "")) if pd.notna(row.get("Contact Method", "")) else "", color=theme["text"])),
+                                ft.DataCell(ft.Row([view_btn, delete_btn], spacing=5)),
+                            ]
+                        )
+                    )
+            self.support_data_table.bgcolor = theme["bg"]
+            page.update()
+
+        def submit_support(self, e):
+            df_support = get_or_create_sheet("Support")
+            error = ""
+            parts = []
+            if self.support_method_phone.value:
+                parts.append("Phone")
+            if self.support_method_email.value:
+                parts.append("Email")
+            contact_method = " & ".join(parts)
+            if not self.support_employee.value:
+                error = "Select Employee for Support"
+            elif not self.support_date.value.strip():
+                error = "Select Date for Support"
+            elif not self.support_site.value.strip():
+                error = "Enter Site"
+            elif not contact_method:
+                error = "Select Contact Method"
+            elif not self.support_summary.value.strip():
+                error = "Enter Support Summary"
+            if error:
+                show_error_message(error)
+                return
+            new_row = pd.DataFrame(
+                [{
+                    "Date": self.support_date.value,
+                    "Employee": self.support_employee.value,
+                    "Site": self.support_site.value,
+                    "Contact Method": contact_method,
+                    "Summary": self.support_summary.value
+                }]
+            )
+            df_support = pd.concat([df_support, new_row], ignore_index=True)
+            save_sheet("Support", df_support)
+            self.support_df_cache = df_support
+            update_support_table_ref and update_support_table_ref()
+            self.support_date.value = ""
+            self.support_site.value = ""
+            self.support_method_phone.value = False
+            self.support_method_email.value = False
+            self.support_summary.value = ""
+            e.page.open(ft.SnackBar(content=ft.Text("Support entry submitted successfully!"), bgcolor=ft.Colors.GREEN_700))
+            e.page.update()
+
+    support_tab_content = SupportTab()
+    support_tab_container = support_tab_content.container
+    update_support_table_ref = support_tab_content.update_support_table
+
+    # ------------------- Admin Tab -------------------
+    admin_unlocked = False
+    admin_needs_render = True
+    admin_tab_container = ft.Container()
+    admin_password_field = ft.TextField(label="Admin Password", password=True, can_reveal_password=True, width=260)
+
+    admin_employee_list = ft.Column(spacing=6, scroll="always")
+    admin_new_employee_field = ft.TextField(label="New Employee Name", width=260)
+
+    admin_operation_list = ft.Column(spacing=6, scroll="always")
+    admin_new_operation_field = ft.TextField(label="New Operation Name", width=260)
+    admin_is_pinned_checkbox = ft.Checkbox(label="Pin to top", value=False)
+
+    admin_site_list = ft.Column(spacing=6, scroll="always")
+    admin_new_site_field = ft.TextField(label="New Site Name", width=200)
+    admin_site_group_dropdown = ft.Dropdown(
+        label="Group",
+        options=[
+            ft.dropdown.Option("USA"),
+            ft.dropdown.Option("USN"),
+            ft.dropdown.Option("USMC"),
+            ft.dropdown.Option("USAF"),
+        ],
+        width=120,
+        value="USA",
+    )
+
+    admin_current_password = ft.TextField(label="Current Password", password=True, can_reveal_password=True, width=220)
+    admin_new_password = ft.TextField(label="New Password", password=True, can_reveal_password=True, width=220)
+    admin_confirm_password = ft.TextField(label="Confirm New Password", password=True, can_reveal_password=True, width=220)
+
+    report_start_date = ft.TextField(label="Start Date", read_only=True, width=180)
+    report_end_date = ft.TextField(label="End Date", read_only=True, width=180)
+    report_start_calendar = ft.IconButton(icon="calendar_month")
+    report_end_calendar = ft.IconButton(icon="calendar_month")
+    report_start_picker = ft.DatePicker()
+    report_end_picker = ft.DatePicker()
+    page.overlay.append(report_start_picker)
+    page.overlay.append(report_end_picker)
+
+    def update_employee_dropdowns():
+        employee_dropdown.options = [ft.dropdown.Option(emp) for emp in employees]
+        try:
+            msaw_apex_tab_content.msaw_employee.options = [ft.dropdown.Option(emp) for emp in employees]
+            msaw_apex_tab_content.apex_employee.options = [ft.dropdown.Option(emp) for emp in employees]
+            support_tab_content.support_employee.options = [ft.dropdown.Option(emp) for emp in employees]
+        except Exception:
+            pass
+        if employee_dropdown.value not in employees:
+            employee_dropdown.value = None
+        page.update()
+
+    def render_admin_employees():
+        theme = taco_theme[page.theme_mode]
+        admin_employee_list.controls.clear()
+        for emp in employees:
+            is_admin = emp in admins
+            admin_employee_list.controls.append(
+                ft.Container(
+                    bgcolor=theme["surface"],
+                    border_radius=6,
+                    padding=8,
+                    content=ft.Row(
+                        [
+                            ft.Text(emp, width=180, color=theme["text"]),
+                            ft.Checkbox(label="Admin", value=is_admin, on_change=lambda ev, name=emp: toggle_admin(name, ev.control.value)),
+                            ft.TextButton("Delete", style=ft.ButtonStyle(color="#d32f2f"), on_click=lambda ev, name=emp: delete_employee(name, ev)),
+                        ],
+                        spacing=10,
+                    ),
+                )
+            )
+
+    def render_admin_operations():
+        theme = taco_theme[page.theme_mode]
+        admin_operation_list.controls.clear()
+        for op in operations_list:
+            is_pinned = op in pinned_ops
+            admin_operation_list.controls.append(
+                ft.Container(
+                    bgcolor=theme["surface"],
+                    border_radius=6,
+                    padding=8,
+                    content=ft.Row(
+                        [
+                            ft.Text(op, width=200, color=theme["text"]),
+                            ft.Checkbox(label="Pinned", value=is_pinned, on_change=lambda ev, name=op: toggle_pin(name, ev.control.value)),
+                            ft.TextButton("Delete", style=ft.ButtonStyle(color="#d32f2f"), on_click=lambda ev, name=op: delete_operation(name, ev)),
+                        ],
+                        spacing=10,
+                    ),
+                )
+            )
+
+    def render_admin_sites():
+        theme = taco_theme[page.theme_mode]
+        admin_site_list.controls.clear()
+        if not hasattr(render_admin_sites, "expanded_groups"):
+            render_admin_sites.expanded_groups = set()
+        for group in ["USA", "USN", "USMC", "USAF"]:
+            is_expanded = group in render_admin_sites.expanded_groups
+            sites = site_groups.get(group, [])
+            site_count = len(sites)
+
+            def create_toggle_handler(grp):
+                def handler(ev):
+                    if grp in render_admin_sites.expanded_groups:
+                        render_admin_sites.expanded_groups.remove(grp)
+                    else:
+                        render_admin_sites.expanded_groups.add(grp)
+                    render_admin_sites()
+                    page.update()
+                return handler
+
+            group_button = ft.ElevatedButton(
+                text=f"{group} Sites ({site_count})",
+                bgcolor=f"#{group_colors[group]}",
+                color="#FFFFFF" if group in ["USMC", "USAF"] else "#000000",
+                width=250,
+                on_click=create_toggle_handler(group),
+                icon=ft.Icons.EXPAND_MORE if is_expanded else ft.Icons.CHEVRON_RIGHT,
+            )
+            admin_site_list.controls.append(group_button)
+
+            if is_expanded:
+                if sites:
+                    for site in sites:
+                        admin_site_list.controls.append(
+                            ft.Container(
+                                bgcolor=theme["surface"],
+                                border_radius=6,
+                                padding=8,
+                                margin=ft.margin.only(left=30, top=5),
+                                content=ft.Row(
+                                    [
+                                        ft.Text(site, width=150, color=theme["text"]),
+                                        ft.IconButton(
+                                            icon=ft.Icons.DELETE,
+                                            icon_color="#d32f2f",
+                                            tooltip="Delete Site",
+                                            on_click=lambda ev, s=site, g=group: delete_site(s, g, ev),
+                                        ),
+                                    ],
+                                    spacing=10,
+                                ),
+                            )
+                        )
+                else:
+                    admin_site_list.controls.append(
+                        ft.Container(
+                            padding=8,
+                            margin=ft.margin.only(left=30, top=5, bottom=10),
+                            content=ft.Text("No sites in this group", italic=True, color="#999999"),
+                        )
+                    )
+            admin_site_list.controls.append(ft.Container(height=5))
+
+    def add_employee(e):
+        nonlocal employees, config
+        new_emp = (admin_new_employee_field.value or "").strip()
+        if not new_emp:
+            show_error_message("Please enter an employee name!")
+            return
+        if new_emp in employees:
+            show_error_message("Employee already exists!")
+            return
+        employees.append(new_emp)
+        config["employees"] = employees
+        save_config(config)
+        admin_new_employee_field.value = ""
+        render_admin_employees()
+        update_employee_dropdowns()
+        e.page.open(ft.SnackBar(content=ft.Text(f"Employee '{new_emp}' added successfully!"), bgcolor=ft.Colors.GREEN_700))
+        e.page.update()
+
+    def toggle_admin(name, is_admin_value):
+        nonlocal admins, config
+        if is_admin_value and name not in admins:
+            admins.append(name)
+        elif not is_admin_value and name in admins:
+            admins.remove(name)
+        config["admins"] = admins
+        save_config(config)
+        page.update()
+
+    def delete_employee(name, e=None):
+        nonlocal employees, admins, config
+        if name in employees:
+            employees.remove(name)
+        if name in admins:
+            admins.remove(name)
+        config["employees"] = employees
+        config["admins"] = admins
+        save_config(config)
+        render_admin_employees()
+        update_employee_dropdowns()
+        if e:
+            e.page.open(ft.SnackBar(content=ft.Text(f"Employee '{name}' deleted successfully!"), bgcolor=ft.Colors.ORANGE_700))
+            e.page.update()
+
+    def add_operation(e):
+        nonlocal operations_list, pinned_ops, other_ops, config
+        new_op = (admin_new_operation_field.value or "").strip()
+        if not new_op:
+            show_error_message("Please enter an operation name!")
+            return
+        if new_op in operations_list:
+            show_error_message("Operation already exists!")
+            return
+        if admin_is_pinned_checkbox.value:
+            pinned_ops.append(new_op)
+        else:
+            other_ops.append(new_op)
+        operations_list = pinned_ops + other_ops
+        config["pinned_ops"] = pinned_ops
+        config["other_ops"] = other_ops
+        save_config(config)
+        admin_new_operation_field.value = ""
+        admin_is_pinned_checkbox.value = False
+        render_admin_operations()
+        build_selection_controls()
+        e.page.open(ft.SnackBar(content=ft.Text(f"Operation '{new_op}' added successfully!"), bgcolor=ft.Colors.GREEN_700))
+        e.page.update()
+
+    def delete_operation(name, e=None):
+        nonlocal operations_list, pinned_ops, other_ops, config
+        if name in pinned_ops:
+            pinned_ops.remove(name)
+        if name in other_ops:
+            other_ops.remove(name)
+        operations_list = pinned_ops + other_ops
+        config["pinned_ops"] = pinned_ops
+        config["other_ops"] = other_ops
+        save_config(config)
+        render_admin_operations()
+        build_selection_controls()
+        if e:
+            e.page.open(ft.SnackBar(content=ft.Text(f"Operation '{name}' deleted successfully!"), bgcolor=ft.Colors.ORANGE_700))
+            e.page.update()
+
+    def toggle_pin(name, is_pinned_value):
+        nonlocal operations_list, pinned_ops, other_ops, config
+        if is_pinned_value and name not in pinned_ops:
+            if name in other_ops:
+                other_ops.remove(name)
+            pinned_ops.append(name)
+        elif not is_pinned_value and name in pinned_ops:
+            pinned_ops.remove(name)
+            if name not in other_ops:
+                other_ops.append(name)
+        operations_list = pinned_ops + other_ops
+        config["pinned_ops"] = pinned_ops
+        config["other_ops"] = other_ops
+        save_config(config)
+        render_admin_operations()
+        build_selection_controls()
+        page.update()
+
+    def add_site(e):
+        nonlocal site_groups, config
+        new_site = (admin_new_site_field.value or "").strip()
+        selected_group = admin_site_group_dropdown.value
+        if not new_site:
+            show_error_message("Please enter a site name!")
+            return
+        for group, sites in site_groups.items():
+            if new_site in sites:
+                show_error_message(f"Site '{new_site}' already exists in {group}!")
+                return
+        if selected_group not in site_groups:
+            site_groups[selected_group] = []
+        site_groups[selected_group].append(new_site)
+        config["site_groups"] = site_groups
+        save_config(config)
+        admin_new_site_field.value = ""
+        render_admin_sites()
+        e.page.open(ft.SnackBar(content=ft.Text(f"Site '{new_site}' added to {selected_group} successfully!"), bgcolor=ft.Colors.GREEN_700))
+        e.page.update()
+
+    def delete_site(site_name, group_name, e=None):
+        nonlocal site_groups, config
+        if group_name in site_groups and site_name in site_groups[group_name]:
+            site_groups[group_name].remove(site_name)
+            config["site_groups"] = site_groups
+            save_config(config)
+            render_admin_sites()
+            if e:
+                e.page.open(ft.SnackBar(content=ft.Text(f"Site '{site_name}' deleted from {group_name} successfully!"), bgcolor=ft.Colors.ORANGE_700))
+                e.page.update()
+
+    def open_report_start_picker(e):
+        report_start_picker.open = True
+        page.update()
+
+    def open_report_end_picker(e):
+        report_end_picker.open = True
+        page.update()
+
+    def report_start_picker_change(e):
+        report_start_date.value = report_start_picker.value.strftime("%Y-%m-%d") if report_start_picker.value else ""
+        report_start_picker.open = False
+        page.update()
+
+    def report_end_picker_change(e):
+        report_end_date.value = report_end_picker.value.strftime("%Y-%m-%d") if report_end_picker.value else ""
+        report_end_picker.open = False
+        page.update()
+
+    report_start_calendar.on_click = open_report_start_picker
+    report_end_calendar.on_click = open_report_end_picker
+    report_start_picker.on_change = report_start_picker_change
+    report_end_picker.on_change = report_end_picker_change
+
+    def generate_report(e):
+        from openpyxl.utils.dataframe import dataframe_to_rows
+        from datetime import datetime
+        try:
+            if not report_start_date.value or not report_end_date.value:
+                show_error_message("Please select both start and end dates!")
+                return
+            start_date = datetime.strptime(report_start_date.value, "%Y-%m-%d")
+            end_date = datetime.strptime(report_end_date.value, "%Y-%m-%d")
+            if start_date > end_date:
+                show_error_message("Start date must be before end date!")
+                return
+            report_folder = r"T:\BAE\No-Touchy\TACOS_App\TEST\newapp\Reports"
+            os.makedirs(report_folder, exist_ok=True)
+            report_filename = f"TACOS_Report_{report_start_date.value}_to_{report_end_date.value}.xlsx"
+            report_path = os.path.join(report_folder, report_filename)
+
+            df_adaptations = pd.read_excel(excel_path, sheet_name="Adaptations", engine="openpyxl") if os.path.exists(excel_path) else pd.DataFrame()
+            df_msaw = get_or_create_sheet("MSAW")
+            df_apex = get_or_create_sheet("APEX")
+            df_support = get_or_create_sheet("Support")
+
+            if not df_adaptations.empty and "Release Date" in df_adaptations.columns:
+                df_adaptations["Release Date"] = pd.to_datetime(df_adaptations["Release Date"], errors="coerce")
+                df_adaptations_filtered = df_adaptations[(df_adaptations["Release Date"] >= start_date) & (df_adaptations["Release Date"] <= end_date)].copy()
+                df_adaptations_filtered["Release Date"] = df_adaptations_filtered["Release Date"].dt.strftime("%Y-%m-%d")
+            else:
+                df_adaptations_filtered = pd.DataFrame()
+
+            if not df_msaw.empty and "Date" in df_msaw.columns:
+                df_msaw["Date"] = pd.to_datetime(df_msaw["Date"], errors="coerce")
+                df_msaw_filtered = df_msaw[(df_msaw["Date"] >= start_date) & (df_msaw["Date"] <= end_date)].copy()
+                df_msaw_filtered["Date"] = df_msaw_filtered["Date"].dt.strftime("%Y-%m-%d")
+            else:
+                df_msaw_filtered = pd.DataFrame()
+
+            if not df_apex.empty and "Date" in df_apex.columns:
+                df_apex["Date"] = pd.to_datetime(df_apex["Date"], errors="coerce")
+                df_apex_filtered = df_apex[(df_apex["Date"] >= start_date) & (df_apex["Date"] <= end_date)].copy()
+                df_apex_filtered["Date"] = df_apex_filtered["Date"].dt.strftime("%Y-%m-%d")
+            else:
+                df_apex_filtered = pd.DataFrame()
+
+            if not df_support.empty and "Date" in df_support.columns:
+                df_support["Date"] = pd.to_datetime(df_support["Date"], errors="coerce")
+                df_support_filtered = df_support[(df_support["Date"] >= start_date) & (df_support["Date"] <= end_date)].copy()
+                df_support_filtered["Date"] = df_support_filtered["Date"].dt.strftime("%Y-%m-%d")
+            else:
+                df_support_filtered = pd.DataFrame()
+
+            if not df_adaptations_filtered.empty:
+                df_adaptations_filtered["Group"] = df_adaptations_filtered["Adaptation Name"].apply(get_site_group)
+                cols = df_adaptations_filtered.columns.tolist()
+                if "Adaptation Name" in cols and "Group" in cols:
+                    idx = cols.index("Adaptation Name")
+                    cols.insert(idx + 1, cols.pop(cols.index("Group")))
+                    df_adaptations_filtered = df_adaptations_filtered[cols]
+
+            if not df_msaw_filtered.empty:
+                df_msaw_filtered["Group"] = df_msaw_filtered["Site"].apply(get_site_group)
+                cols = ["Date", "Employee", "Site", "Group", "Hours"]
+                df_msaw_filtered = df_msaw_filtered[[c for c in cols if c in df_msaw_filtered.columns]]
+
+            if not df_apex_filtered.empty:
+                df_apex_filtered["Group"] = df_apex_filtered["Site"].apply(get_site_group)
+                cols = ["Date", "Employee", "Site", "Group", "Hours"]
+                df_apex_filtered = df_apex_filtered[[c for c in cols if c in df_apex_filtered.columns]]
+
+            if not df_support_filtered.empty:
+                df_support_filtered["Group"] = df_support_filtered["Site"].apply(get_site_group)
+                cols = ["Date", "Employee", "Site", "Group", "Contact Method", "Summary"]
+                df_support_filtered = df_support_filtered[[c for c in cols if c in df_support_filtered.columns]]
+
+            wb = Workbook()
+            if "Sheet" in wb.sheetnames:
+                del wb["Sheet"]
+
+            ws_adapt = wb.create_sheet("Adaptations")
+            if not df_adaptations_filtered.empty:
+                for r_idx, row in enumerate(dataframe_to_rows(df_adaptations_filtered, index=False, header=True), 1):
+                    for c_idx, value in enumerate(row, 1):
+                        ws_adapt.cell(row=r_idx, column=c_idx, value=value)
+                operation_columns = [col for col in df_adaptations_filtered.columns if col in operations_list]
+                data_start_row = 2
+                data_end_row = ws_adapt.max_row
+                totals_row = ws_adapt.max_row + 2
+                cell = ws_adapt.cell(row=totals_row, column=4, value="Totals")
+                cell.font = Font(bold=True)
+                cell.fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+                for col_name in operation_columns:
+                    col_idx = df_adaptations_filtered.columns.tolist().index(col_name) + 1
+                    col_letter = ws_adapt.cell(row=1, column=col_idx).column_letter
+                    cell = ws_adapt.cell(
+                        row=totals_row,
+                        column=col_idx,
+                        value=f"=SUBTOTAL(9,{col_letter}{data_start_row}:{col_letter}{data_end_row})",
+                    )
+                    cell.font = Font(bold=True)
+                    cell.fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+                    cell.number_format = "0"
+                grand_total_row = totals_row + 1
+                cell = ws_adapt.cell(row=grand_total_row, column=4, value="Grand Total")
+                cell.font = Font(bold=True)
+                cell.fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+                grand_total_parts = []
+                for col_name in operation_columns:
+                    col_idx = df_adaptations_filtered.columns.tolist().index(col_name) + 1
+                    col_letter = ws_adapt.cell(row=1, column=col_idx).column_letter
+                    grand_total_parts.append(f"SUBTOTAL(9,{col_letter}{data_start_row}:{col_letter}{data_end_row})")
+                cell = ws_adapt.cell(row=grand_total_row, column=5, value="=" + "+".join(grand_total_parts))
+                cell.font = Font(bold=True)
+                cell.fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+                cell.number_format = "0"
+                gtm_actions_row = grand_total_row + 1
+                cell = ws_adapt.cell(row=gtm_actions_row, column=4, value="GTM Actions Tot")
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = PatternFill(start_color="00B050", end_color="00B050", fill_type="solid")
+                gtm_columns = ["Database Validation", "MSAW Validation", "GTM"]
+                gtm_parts = []
+                for col_name in gtm_columns:
+                    if col_name in df_adaptations_filtered.columns:
+                        col_idx = df_adaptations_filtered.columns.tolist().index(col_name) + 1
+                        col_letter = ws_adapt.cell(row=1, column=col_idx).column_letter
+                        gtm_parts.append(f"SUBTOTAL(9,{col_letter}{data_start_row}:{col_letter}{data_end_row})")
+                if gtm_parts:
+                    cell = ws_adapt.cell(row=gtm_actions_row, column=5, value="=" + "+".join(gtm_parts))
+                    cell.font = Font(bold=True, color="FFFFFF")
+                    cell.fill = PatternFill(start_color="00B050", end_color="00B050", fill_type="solid")
+                    cell.number_format = "0"
+
+            ws_msaw = wb.create_sheet("MSAW")
+            if not df_msaw_filtered.empty:
+                df_msaw_ordered = df_msaw_filtered[["Date", "Employee", "Site", "Group", "Hours"]]
+                for r_idx, row in enumerate(dataframe_to_rows(df_msaw_ordered, index=False, header=True), 1):
+                    for c_idx, value in enumerate(row, 1):
+                        ws_msaw.cell(row=r_idx, column=c_idx, value=value)
+                data_end_row = ws_msaw.max_row
+                totals_row = ws_msaw.max_row + 2
+                cell = ws_msaw.cell(row=totals_row, column=4, value="TOTAL HOURS")
+                cell.font = Font(bold=True)
+                cell.fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+                cell = ws_msaw.cell(row=totals_row, column=5, value=f"=SUBTOTAL(9,E2:E{data_end_row})")
+                cell.font = Font(bold=True)
+                cell.fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+                cell.number_format = "0.0"
+
+            ws_apex = wb.create_sheet("APEX")
+            if not df_apex_filtered.empty:
+                df_apex_ordered = df_apex_filtered[["Date", "Employee", "Site", "Group", "Hours"]]
+                for r_idx, row in enumerate(dataframe_to_rows(df_apex_ordered, index=False, header=True), 1):
+                    for c_idx, value in enumerate(row, 1):
+                        ws_apex.cell(row=r_idx, column=c_idx, value=value)
+                data_end_row = ws_apex.max_row
+                totals_row = ws_apex.max_row + 2
+                cell = ws_apex.cell(row=totals_row, column=4, value="TOTAL HOURS")
+                cell.font = Font(bold=True)
+                cell.fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+                cell = ws_apex.cell(row=totals_row, column=5, value=f"=SUBTOTAL(9,E2:E{data_end_row})")
+                cell.font = Font(bold=True)
+                cell.fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+                cell.number_format = "0.0"
+
+            ws_support = wb.create_sheet("Support")
+            if not df_support_filtered.empty:
+                for r_idx, row in enumerate(dataframe_to_rows(df_support_filtered, index=False, header=True), 1):
+                    for c_idx, value in enumerate(row, 1):
+                        ws_support.cell(row=r_idx, column=c_idx, value=value)
+
+            light_blue_fill = PatternFill(start_color="ADD8E6", end_color="ADD8E6", fill_type="solid")
+            bold_font = Font(bold=True)
+            center_alignment = Alignment(horizontal="center", vertical="center")
+            thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                if ws.max_row >= 1:
+                    for cell in ws[1]:
+                        cell.fill = light_blue_fill
+                        cell.font = bold_font
+                        cell.alignment = center_alignment
+                        cell.border = thin_border
+
+                if sheet_name == "Adaptations" and not df_adaptations_filtered.empty:
+                    ws.auto_filter.ref = ws.dimensions
+                    adapt_name_col = df_adaptations_filtered.columns.tolist().index("Adaptation Name") + 1
+                    group_col = df_adaptations_filtered.columns.tolist().index("Group") + 1
+                    for row_idx in range(2, ws.max_row - 2):
+                        group_value = ws.cell(row=row_idx, column=group_col).value
+                        if group_value and group_value in group_colors:
+                            ws.cell(row=row_idx, column=adapt_name_col).fill = PatternFill(
+                                start_color=group_colors[group_value],
+                                end_color=group_colors[group_value],
+                                fill_type="solid",
+                            )
+                            ws.cell(row=row_idx, column=group_col).fill = PatternFill(
+                                start_color=group_colors[group_value],
+                                end_color=group_colors[group_value],
+                                fill_type="solid",
+                            )
+                elif sheet_name in ["MSAW", "APEX", "Support"]:
+                    ws.auto_filter.ref = ws.dimensions
+                    if sheet_name == "MSAW" and not df_msaw_filtered.empty:
+                        df_temp = df_msaw_ordered
+                    elif sheet_name == "APEX" and not df_apex_filtered.empty:
+                        df_temp = df_apex_ordered
+                    elif sheet_name == "Support" and not df_support_filtered.empty:
+                        df_temp = df_support_filtered
+                    else:
+                        df_temp = None
+                    if df_temp is not None and "Site" in df_temp.columns and "Group" in df_temp.columns:
+                        site_col = df_temp.columns.tolist().index("Site") + 1
+                        group_col = df_temp.columns.tolist().index("Group") + 1
+                        max_data_row = ws.max_row - 1 if sheet_name in ["MSAW", "APEX"] else ws.max_row
+                        for row_idx in range(2, max_data_row + 1):
+                            group_value = ws.cell(row=row_idx, column=group_col).value
+                            if group_value and group_value in group_colors:
+                                ws.cell(row=row_idx, column=site_col).fill = PatternFill(
+                                    start_color=group_colors[group_value],
+                                    end_color=group_colors[group_value],
+                                    fill_type="solid",
+                                )
+                                ws.cell(row=row_idx, column=group_col).fill = PatternFill(
+                                    start_color=group_colors[group_value],
+                                    end_color=group_colors[group_value],
+                                    fill_type="solid",
+                                )
+
+                # Autosize
+                for column in ws.columns:
+                    max_length = 0
+                    column_letter = None
+                    try:
+                        column_letter = column[0].column_letter
+                    except:
+                        continue
+                    for cell in column:
+                        try:
+                            if cell.value:
+                                if isinstance(cell.value, str) and cell.value.startswith("="):
+                                    max_length = max(max_length, 10)
+                                else:
+                                    max_length = max(max_length, len(str(cell.value)))
+                        except:
+                            pass
+                    ws.column_dimensions[column_letter].width = max_length + 2
+
+            wb.save(report_path)
+            wb.close()
+
+            try:
+                import subprocess, platform
+                system = platform.system()
+                if system == "Windows":
+                    os.startfile(report_path)
+                elif system == "Darwin":
+                    subprocess.run(["open", report_path])
+                else:
+                    subprocess.run(["xdg-open", report_path])
+            except Exception:
+                logger.exception("Error opening report file")
+
+            e.page.open(ft.SnackBar(content=ft.Text(f"Report generated successfully!\n{report_filename}"), bgcolor=ft.Colors.GREEN_700))
+            e.page.update()
+        except Exception:
+            logger.exception("Error generating report")
+            show_error_message("Failed to generate report. See logs for details.")
+
+    def lock_admin_and_save(e=None):
+        nonlocal admin_unlocked, admin_needs_render
+        admin_unlocked = False
+        admin_needs_render = True
+        if e:
+            e.page.open(ft.SnackBar(content=ft.Text("Settings saved and admin panel locked!"), bgcolor=ft.Colors.BLUE_700))
+        render_admin_tab()
+
+    def change_admin_password(e):
+        nonlocal ADMIN_PASSWORD, config
+        current = (admin_current_password.value or "").strip()
+        new_pass = (admin_new_password.value or "").strip()
+        confirm = (admin_confirm_password.value or "").strip()
+        if not current or not new_pass or not confirm:
+            show_error_message("All password fields are required!")
+            return
+        if current != ADMIN_PASSWORD:
+            show_error_message("Current password is incorrect!")
+            admin_current_password.value = ""
+            page.update()
+            return
+        if new_pass != confirm:
+            show_error_message("New passwords do not match!")
+            admin_new_password.value = ""
+            admin_confirm_password.value = ""
+            page.update()
+            return
+        if len(new_pass) < 1:
+            show_error_message("Password must be at least 1 characters!")
+            return
+        ADMIN_PASSWORD = new_pass
+        config["admin_password"] = new_pass
+        save_config(config)
+        admin_current_password.value = ""
+        admin_new_password.value = ""
+        admin_confirm_password.value = ""
+        e.page.open(ft.SnackBar(content=ft.Text("Admin password changed successfully!"), bgcolor=ft.Colors.GREEN_700))
+        e.page.update()
+
+    def render_admin_tab():
+        nonlocal admin_needs_render
+        theme = taco_theme[page.theme_mode]
+        button_bg_color = "#FFD166" if page.theme_mode == "light" else "#8B4513"
+        button_text_color = "#4E342E" if page.theme_mode == "light" else "#F1F1E6"
+        if not admin_needs_render:
+            return
+        admin_needs_render = False
+        if not admin_unlocked:
+            report_panel = ft.Container(
+                bgcolor=theme["bg"],
+                border=ft.border.all(2, theme["outline"]),
+                border_radius=8,
+                padding=12,
+                width=600,
+                content=ft.Column(
+                    [
+                        ft.Text("📊 Generate Report", size=18, weight="bold", color=theme["text"]),
+                        ft.Divider(),
+                        ft.Row(
+                            [
+                                ft.Column(
+                                    [
+                                        ft.Text("Start Date:", weight="bold", color=theme["text"]),
+                                        ft.Row([report_start_date, report_start_calendar], spacing=5),
+                                    ],
+                                    spacing=5,
+                                ),
+                                ft.Container(width=20),
+                                ft.Column(
+                                    [
+                                        ft.Text("End Date:", weight="bold", color=theme["text"]),
+                                        ft.Row([report_end_date, report_end_calendar], spacing=5),
+                                    ],
+                                    spacing=5,
+                                ),
+                            ],
+                            spacing=10,
+                        ),
+                        ft.Container(height=10),
+                        ft.ElevatedButton(
+                            "Generate Report",
+                            icon=ft.Icons.DESCRIPTION,
+                            on_click=generate_report,
+                            style=ft.ButtonStyle(bgcolor="#0070C0", color="#FFFFFF"),
+                            width=200,
+                        ),
+                    ],
+                    spacing=10,
+                ),
+            )
+            admin_tab_container.content = ft.Container(
+                bgcolor=theme["bg"],
+                padding=20,
+                content=ft.Column(
+                    [
+                        ft.Text("Admin Access", size=20, weight="bold", color=theme["text"]),
+                        ft.Text("Enter the admin password to unlock management tools.", color=theme["text"]),
+                        ft.Row(
+                            [
+                                admin_password_field,
+                                ft.ElevatedButton(
+                                    "Unlock",
+                                    on_click=try_unlock_admin,
+                                    style=ft.ButtonStyle(bgcolor=button_bg_color, color=button_text_color),
+                                ),
+                            ],
+                            spacing=10,
+                        ),
+                        ft.Container(height=30),
+                        ft.Divider(),
+                        ft.Container(height=20),
+                        report_panel,
+                    ],
+                    spacing=12,
+                    horizontal_alignment="start",
+                ),
+            )
+        else:
+            render_admin_employees()
+            render_admin_operations()
+            render_admin_sites()
+            password_panel = ft.Container(
+                bgcolor=theme["bg"],
+                border=ft.border.all(2, theme["outline"]),
+                border_radius=8,
+                padding=12,
+                width=700,
+                content=ft.Column(
+                    [
+                        ft.Text("🔐 Change Admin Password", size=18, weight="bold", color=theme["text"]),
+                        ft.Divider(),
+                        ft.Row([admin_current_password, admin_new_password, admin_confirm_password], spacing=10),
+                        ft.ElevatedButton(
+                            "Change Password",
+                            on_click=change_admin_password,
+                            style=ft.ButtonStyle(bgcolor=button_bg_color, color=button_text_color),
+                            width=160,
+                        ),
+                    ],
+                    spacing=10,
+                ),
+            )
+            employees_panel = ft.Container(
+                bgcolor=theme["bg"],
+                border=ft.border.all(2, theme["outline"]),
+                border_radius=8,
+                padding=12,
+                content=ft.Column(
+                    [
+                        ft.Text("👥 Manage Employees", size=18, weight="bold", color=theme["text"]),
+                        ft.Container(content=admin_employee_list, expand=True),
+                        ft.Divider(),
+                        ft.Text("Add New Employee", weight="bold", color=theme["text"]),
+                        ft.Row(
+                            [
+                                admin_new_employee_field,
+                                ft.ElevatedButton(
+                                    "Add",
+                                    on_click=add_employee,
+                                    style=ft.ButtonStyle(bgcolor=button_bg_color, color=button_text_color),
+                                ),
+                            ],
+                            spacing=10,
+                        ),
+                    ],
+                    spacing=10,
+                    expand=True,
+                ),
+                expand=1,
+            )
+            operations_panel = ft.Container(
+                bgcolor=theme["bg"],
+                border=ft.border.all(2, theme["outline"]),
+                border_radius=8,
+                padding=12,
+                content=ft.Column(
+                    [
+                        ft.Text("⚙️ Manage Operations", size=18, weight="bold", color=theme["text"]),
+                        ft.Container(content=admin_operation_list, expand=True),
+                        ft.Divider(),
+                        ft.Text("Add New Operation", weight="bold", color=theme["text"]),
+                        ft.Row([admin_new_operation_field, admin_is_pinned_checkbox], spacing=10),
+                        ft.ElevatedButton(
+                            "Add",
+                            on_click=add_operation,
+                            style=ft.ButtonStyle(bgcolor=button_bg_color, color=button_text_color),
+                        ),
+                    ],
+                    spacing=10,
+                    expand=True,
+                ),
+                expand=1,
+            )
+            sites_panel = ft.Container(
+                bgcolor=theme["bg"],
+                border=ft.border.all(2, theme["outline"]),
+                border_radius=8,
+                padding=12,
+                content=ft.Column(
+                    [
+                        ft.Text("🌍 Manage Site Groups", size=18, weight="bold", color=theme["text"]),
+                        ft.Row(
+                            [
+                                ft.Container(width=12, height=12, bgcolor="#00FF00", border_radius=6),
+                                ft.Text("USA", size=12, color=theme["text"]),
+                                ft.Container(width=15),
+                                ft.Container(width=12, height=12, bgcolor="#FFFF00", border_radius=6),
+                                ft.Text("USN", size=12, color=theme["text"]),
+                                ft.Container(width=15),
+                                ft.Container(width=12, height=12, bgcolor="#FF0000", border_radius=6),
+                                ft.Text("USMC", size=12, color=theme["text"]),
+                                ft.Container(width=15),
+                                ft.Container(width=12, height=12, bgcolor="#ADD8E6", border_radius=6),
+                                ft.Text("USAF", size=12, color=theme["text"]),
+                            ],
+                            spacing=5,
+                        ),
+                        ft.Container(content=admin_site_list, expand=True),
+                        ft.Divider(),
+                        ft.Text("Add New Site", weight="bold", color=theme["text"]),
+                        ft.Row([admin_new_site_field, admin_site_group_dropdown], spacing=10),
+                        ft.ElevatedButton(
+                            "Add",
+                            on_click=add_site,
+                            style=ft.ButtonStyle(bgcolor=button_bg_color, color=button_text_color),
+                        ),
+                    ],
+                    spacing=10,
+                    expand=True,
+                ),
+                expand=1,
+            )
+            admin_tab_container.content = ft.Container(
+                bgcolor=theme["bg"],
+                padding=20,
+                content=ft.Column(
+                    [
+                        password_panel,
+                        ft.Container(height=10),
+                        ft.Row([employees_panel, operations_panel, sites_panel], spacing=20, alignment="start", vertical_alignment="start", expand=True),
+                        ft.Row(
+                            [
+                                ft.Container(expand=True),
+                                ft.ElevatedButton(
+                                    "Save & Lock",
+                                    on_click=lock_admin_and_save,
+                                    style=ft.ButtonStyle(bgcolor=button_bg_color, color=button_text_color),
+                                ),
+                            ],
+                            alignment="end",
+                        ),
+                    ],
+                    spacing=20,
+                    expand=True,
+                ),
+            )
+        page.update()
+
+    def try_unlock_admin(e):
+        nonlocal admin_unlocked, admin_needs_render
+        if (admin_password_field.value or "").strip() == ADMIN_PASSWORD:
+            admin_unlocked = True
+            admin_password_field.value = ""
+            admin_needs_render = True
+            show_success_message("Admin tools unlocked")
+            render_admin_tab()
+        else:
+            admin_password_field.value = ""
+            admin_password_field.error_text = "Incorrect password!"
+            admin_password_field.update()
+            show_error_message("Incorrect password")
+
+    # ------------------- Tabs -------------------
+    render_admin_tab()
+
+    def on_tab_change(e):
+        nonlocal admin_needs_render
+        if tabs.selected_index == 3:
+            admin_needs_render = True
+            render_admin_tab()
+
+    tabs = ft.Tabs(
+        selected_index=0,
+        expand=True,
+        on_change=on_tab_change,
+        tabs=[
+            ft.Tab(text="🌮 Adaptations", content=adaptations_content),
+            ft.Tab(text="⏱️ MSAW/APEX Hours", content=msaw_apex_container),
+            ft.Tab(text="🤝 Support", content=support_tab_container),
+            ft.Tab(text="🛠️ Admin", content=admin_tab_container),
+        ],
+    )
+
+    # ------------------- Resize + Theme -------------------
+    def on_window_resize(e):
+        window_state["width"] = page.window.width or 1600
+        window_state["height"] = page.window.height or 1000
+        update_table_dimensions()
+        page.update()
+
+    def update_table_dimensions():
+        width = window_state["width"]
+        height = window_state["height"]
+        scrollable_table.width = max(800, width - 600)
+        scrollable_table.height = max(400, height - 250)
+        input_column.width = min(420, max(320, int(width * 0.22)))
+
+    def apply_theme():
+        nonlocal admin_needs_render
+        theme = taco_theme[page.theme_mode]
+        page.bgcolor = theme["bg"]
+        theme_button.text = "🌙 Dark Mode" if page.theme_mode == "light" else "☀️ Light Mode"
+        button_bg_color = "#FFD166" if page.theme_mode == "light" else "#8B4513"
+        button_text_color = "#4E342E" if page.theme_mode == "light" else "#F1F1E6"
+
+        submit_btn.style = ft.ButtonStyle(
+            padding=ft.padding.symmetric(20, 16),
+            bgcolor=button_bg_color,
+            color=button_text_color,
+            shape=ft.RoundedRectangleBorder(radius=10),
+        )
+
+        try:
+            tip_button.style = ft.ButtonStyle(bgcolor=button_bg_color, color=button_text_color)
+        except Exception:
+            pass
+
+        try:
+            msaw_apex_tab_content.msaw_submit.style = ft.ButtonStyle(bgcolor=button_bg_color, color=button_text_color)
+            msaw_apex_tab_content.apex_submit.style = ft.ButtonStyle(bgcolor=button_bg_color, color=button_text_color)
+        except Exception:
+            pass
+
+        try:
+            support_tab_content.support_submit.style = ft.ButtonStyle(bgcolor=button_bg_color, color=button_text_color)
+        except Exception:
+            pass
+
+        selected_operations_display.border = ft.border.all(2, theme["outline"])
+        selected_operations_display.bgcolor = theme["bg"]
+        data_content.bgcolor = theme["bg"]
+        scrollable_table.bgcolor = theme["bg"]
+        scrollable_table.border = ft.border.all(2, theme["outline"])
+        data_table.bgcolor = theme["bg"]
+        input_column.bgcolor = theme["bg"]
+        adaptations_content.bgcolor = theme["bg"]
+        submitted_adaptations_header.color = theme["text"]
+        msaw_hours_header.color = theme["text"]
+        apex_hours_header.color = theme["text"]
+        support_header.color = theme["text"]
+
+        try:
+            msaw_apex_tab_content.theme = theme
+        except Exception:
+            pass
+        try:
+            support_tab_content.theme = theme
+        except Exception:
+            pass
+
+        if tabs.selected_index == 3:
+            admin_needs_render = True
+            render_admin_tab()
+
+        update_selected_display()
+        update_data_table()
+        page.update()
+
+    # ------------------- Initialize -------------------
+    build_selection_controls()
+    update_selected_display()
+    update_data_table()
+    update_table_dimensions()
+
+    page.on_resized = on_window_resize
+
+    page.add(ft.Row([theme_button, tip_button], spacing=10), tabs)
+
+    apply_theme()
+    page.update()
+
+
+if __name__ == "__main__":
+    ft.app(target=main)
