@@ -5,9 +5,14 @@ from openpyxl import load_workbook, Workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 import json
 import logging
+import subprocess
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+APP_VERSION = "v1.2.3"
+VERSION_FILE_PATH = r"T:\\File Dump\\BZ\\UOCA\\tacos\\vercheck.txt"
+INSTALLER_PATH = r"T:\\File Dump\\BZ\\UOCA\\tacos\\install.bat"
 
 
 def main(page: ft.Page):
@@ -315,6 +320,49 @@ def main(page: ft.Page):
 
     theme_button = ft.ElevatedButton("🌙 Dark Mode")
     tip_button = ft.ElevatedButton("💸 Tip")
+
+    is_outdated = False
+
+    version_text = ft.Text(APP_VERSION, size=12, weight="bold")
+    update_button = ft.ElevatedButton("Update Now!", visible=False)
+    version_container = ft.Column(
+        controls=[update_button, version_text],
+        spacing=6,
+        horizontal_alignment=ft.CrossAxisAlignment.END,
+    )
+    version_footer = ft.Row(
+        controls=[ft.Container(content=version_container, padding=ft.padding.only(right=20, bottom=20))],
+        alignment=ft.MainAxisAlignment.END,
+    )
+
+    def launch_update(e=None):
+        try:
+            subprocess.Popen(["cmd", "/c", INSTALLER_PATH])
+            show_success_message("Update started.")
+        except Exception:
+            logger.exception("Failed to start installer")
+            show_error_message("Failed to start update.")
+
+    update_button.on_click = launch_update
+
+    def update_version_display():
+        theme = taco_theme[page.theme_mode]
+        version_text.value = APP_VERSION
+        version_text.color = "#c62828" if is_outdated else theme["text"]
+        update_button.visible = is_outdated
+        version_container.update()
+
+    def check_version_status():
+        nonlocal is_outdated
+        file_version = None
+        try:
+            with open(VERSION_FILE_PATH, "r") as version_file:
+                file_version = version_file.read().strip()
+        except Exception:
+            logger.exception("Error reading version file for comparison")
+        is_outdated = file_version != APP_VERSION
+        update_version_display()
+        # Snackbar removed per request to avoid blocking page interactions
 
     def toggle_theme(e=None):
         page.theme_mode = "dark" if page.theme_mode == "light" else "light"
@@ -2492,6 +2540,11 @@ def main(page: ft.Page):
             pass
 
         try:
+            update_button.style = ft.ButtonStyle(bgcolor=button_bg_color, color=button_text_color)
+        except Exception:
+            pass
+
+        try:
             msaw_apex_tab_content.msaw_submit.style = ft.ButtonStyle(bgcolor=button_bg_color, color=button_text_color)
             msaw_apex_tab_content.apex_submit.style = ft.ButtonStyle(bgcolor=button_bg_color, color=button_text_color)
         except Exception:
@@ -2530,6 +2583,7 @@ def main(page: ft.Page):
 
         update_selected_display()
         update_data_table()
+        update_version_display()
         page.update()
 
     # ------------------- Initialize -------------------
@@ -2540,9 +2594,29 @@ def main(page: ft.Page):
 
     page.on_resized = on_window_resize
 
-    page.add(ft.Row([theme_button, tip_button], spacing=10), tabs)
+    main_layout = ft.Column(
+        [
+            ft.Row([theme_button, tip_button], spacing=10),
+            tabs,
+        ],
+        spacing=10,
+        expand=True,
+    )
+
+    page.add(
+        ft.Column(
+            controls=[
+                main_layout,
+                version_footer,
+            ],
+            spacing=0,
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            expand=True,
+        )
+    )
 
     apply_theme()
+    check_version_status()
     page.update()
 
 
