@@ -330,12 +330,10 @@ def main(page: ft.Page):
         spacing=6,
         horizontal_alignment="end",
     )
-    page.overlay.append(
-        ft.Container(
-            content=version_container,
-            padding=20,
-            alignment=ft.alignment.bottom_right,
-        )
+    version_display_container = ft.Container(
+        content=version_container,
+        padding=20,
+        alignment=ft.alignment.bottom_right,
     )
 
     def launch_update(e=None):
@@ -2598,7 +2596,16 @@ def main(page: ft.Page):
 
     page.on_resized = on_window_resize
 
-    page.add(ft.Row([theme_button, tip_button], spacing=10), tabs)
+    main_layout = ft.Column(
+        [
+            ft.Row([theme_button, tip_button], spacing=10),
+            tabs,
+        ],
+        spacing=10,
+        expand=True,
+    )
+
+    page.add(ft.Stack([main_layout, version_display_container], expand=True))
 
     apply_theme()
     check_version_status()
