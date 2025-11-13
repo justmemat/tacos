@@ -326,13 +326,13 @@ def main(page: ft.Page):
     version_text = ft.Text(APP_VERSION, size=12, weight="bold")
     update_button = ft.ElevatedButton("Update Now!", visible=False)
     version_container = ft.Column(
-        [update_button, version_text],
+        controls=[update_button, version_text],
         spacing=6,
-        horizontal_alignment="end",
+        horizontal_alignment=ft.CrossAxisAlignment.END,
     )
-    version_footer = ft.Container(
-        content=ft.Row([version_container], alignment="end"),
-        padding=20,
+    version_footer = ft.Row(
+        controls=[ft.Container(content=version_container, padding=ft.padding.only(right=20, bottom=20))],
+        alignment=ft.MainAxisAlignment.END,
     )
 
     def launch_update(e=None):
@@ -2605,11 +2605,12 @@ def main(page: ft.Page):
 
     page.add(
         ft.Column(
-            [
+            controls=[
                 main_layout,
                 version_footer,
             ],
             spacing=0,
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             expand=True,
         )
     )
