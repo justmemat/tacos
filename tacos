@@ -330,10 +330,9 @@ def main(page: ft.Page):
         spacing=6,
         horizontal_alignment="end",
     )
-    version_display_container = ft.Container(
-        content=version_container,
+    version_footer = ft.Container(
+        content=ft.Row([version_container], alignment="end"),
         padding=20,
-        alignment=ft.alignment.bottom_right,
     )
 
     def launch_update(e=None):
@@ -363,8 +362,7 @@ def main(page: ft.Page):
             logger.exception("Error reading version file for comparison")
         is_outdated = file_version != APP_VERSION
         update_version_display()
-        if is_outdated:
-            show_error_message("Software is out of date.")
+        # Snackbar removed per request to avoid blocking page interactions
 
     def toggle_theme(e=None):
         page.theme_mode = "dark" if page.theme_mode == "light" else "light"
@@ -2605,7 +2603,16 @@ def main(page: ft.Page):
         expand=True,
     )
 
-    page.add(ft.Stack([main_layout, version_display_container], expand=True))
+    page.add(
+        ft.Column(
+            [
+                main_layout,
+                version_footer,
+            ],
+            spacing=0,
+            expand=True,
+        )
+    )
 
     apply_theme()
     check_version_status()
